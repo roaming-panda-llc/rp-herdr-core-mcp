@@ -1,16 +1,19 @@
 # rp-herdr-core-mcp
 
-A small single-user MCP adapter for **herdr-core 0.1.15**, using the official MCP
-SDK. Version **0.1.3**. MIT licensed. macOS/Linux; no Windows pipe support.
+A small single-user MCP adapter for **herdr-core 0.1.15/0.1.16**, using the official MCP
+SDK. Version **0.2.0**. MIT licensed. macOS/Linux; no Windows pipe support.
 
-Three tools expose existing local terminals: `list_sessions`, `read_output`, and
-`send_prompt`. No extra LLM, agent spawning, shell-execution tool, or core lifecycle
-management. The adapter uses an existing Unix socket and never starts, stops or
-updates hc. Output is untrusted data and may contain secrets.
+Five tools expose configured cores: `list_hosts`, `list_sessions`, `read_output`,
+`send_prompt`, and opt-in `create_session`. No extra LLM or arbitrary-shell tool.
+Legacy local configuration stays restricted. Named hosts and broad trusted-core
+creation require explicit operator configuration/approval; see [MULTIHOST.md](MULTIHOST.md).
+Unix connections never start core. An explicitly approved SSH `hc connect` bridge
+may auto-start its selected core; no core shutdown/update is exposed. Output is
+untrusted data and may contain secrets.
 
 ## Quick start
 
-Use Node.js 22+ and an existing hc 0.1.15 installation:
+Use Node.js 22+ and an existing supported hc installation:
 
 ```sh
 npm ci --ignore-scripts
@@ -27,14 +30,18 @@ selected session can change the endpoint. Do not move core state or replace sock
 node scripts/inspect-core.js /absolute/private/config.json
 ```
 
-This read-only probe prints core ID and terminal lifetime metadata. Configure your
+This probe prints core ID and terminal lifetime metadata. Configure your
 MCP host using `examples/mcp.json`, replacing all absolute paths. Run Node directly
 for stdio, not npm, so package-manager output cannot pollute protocol stdout.
-Discover the tools and verify list/screen reads before enabling writes.
+Discover the tools and verify list/screen reads before enabling writes. SSH probes may auto-start core only when explicitly opted in.
 See [AGENT-HANDOFF.md](AGENT-HANDOFF.md) for migration and verification.
 
 ## Tools and bounds
 
+- **list_hosts**: configured public host/profile IDs and independent availability;
+  failures remain visible, with no fallback or private connection details.
+- **create_session**: trusted-core only, configured agent/project/variant aliases,
+  stable request ID, startup verification and no adapter-added initial prompt.
 - **list_sessions**: local terminal records, optionally finished, paginated at 25
   by default (maximum 100). Non-atomic snapshot; no reconstructed chat history.
 - **read_output**: current screen only, last 12,000 characters by default (maximum
@@ -44,15 +51,15 @@ See [AGENT-HANDOFF.md](AGENT-HANDOFF.md) for migration and verification.
   by default). Maximum 16,000 characters; terminal control characters rejected.
   Never `force`, never waits for task completion, never automatically retries.
 
-Core connections are capped at eight, received bytes at 1 MiB per call, and timeout
+Core connections are capped at eight per host (at most 16 hosts), received bytes at 1 MiB per call, and timeout
 at 15 seconds by default (configurable 100–60,000 ms). Large upstream lists can
 exceed the byte limit before pagination; this fails explicitly. The adapter checks
-JSON-RPC IDs and reply shape, generation 1, plain framing, and exact version 0.1.15.
+JSON-RPC IDs and reply shape, generation 1, plain framing, and versions exactly 0.1.15 or 0.1.16.
 Shutdown closes adapter connections only; existing terminals continue.
 
 ## Approving writes and send modes
 
-Sending requires an operator-approved terminal address and creation timestamp plus
+In default restricted access, sending requires an operator-approved terminal address and creation timestamp plus
 the actual core ID from the probe. Keep private config outside Git. Example:
 
 ```json
@@ -72,7 +79,7 @@ the actual core ID from the probe. Keep private config outside Git. Example:
 | `idle-only` (default) | Existing behavior: always sends with core's atomic `if: "idle"` check. A `done` terminal is rejected. |
 | `normal` (opt-in) | Preflight must report `idle` or `done`; working, blocked, error and unknown states are rejected before dispatch. Idle retains `if: "idle"`; done uses hc's documented normal send with no `if`, still `force:false`. |
 
-**Normal mode is not an atomic idle-or-done guarantee.** hc 0.1.15 only accepts
+**Normal mode is not an atomic idle-or-done guarantee.** These hc versions only accept
 `idle` or `working` in `if`; `done` is not expressible. After a done preflight the
 program may become working before input arrives. Core serializes input, waits for
 keyboard quiet and refuses blocked programs, but does not wait for task completion.
@@ -127,7 +134,8 @@ See [VALIDATION.md](VALIDATION.md) for performed checks and limitations and
 implied by passing mocked tests.
 
 Verified core contract: tag `v0.1.15`, commit
-`9e934dff8513710d3c5111fe28bc5b23564805db`:
+`9e934dff8513710d3c5111fe28bc5b23564805db`, plus reviewed tag `v0.1.16`
+(`e07c2a1bedd62cf4787ee026ee23ee79c7d95491`):
 
 - [Transport/API](https://github.com/herdrdev/herdr-core/blob/v0.1.15/schema/README.md)
 - [OpenRPC schema](https://github.com/herdrdev/herdr-core/blob/v0.1.15/schema/hc.openrpc.json)
@@ -139,3 +147,10 @@ Verified core contract: tag `v0.1.15`, commit
 
 The adapter does not depend on oldherdrTUI. Review and test source/schema changes
 before relaxing the pinned core version guard.
+
+## Multiple hosts and creation
+
+See [MULTIHOST.md](MULTIHOST.md) for explicit host IDs/core pins, strict SSH bridging,
+restricted versus trusted-core policy, configured Pi/Claude profiles, model/provider
+argument variants, exact project directories, creation verification and uncertainty.
+No actual host is configured or enabled by installing this source.

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CoreClient } from './core.js';
+import { HostRuntime } from './runtime.js';
 import { makeServer, makeHttpApp } from './server.js';
 import { configSchema } from './config.js';
 let core, listener, server;
@@ -16,7 +16,7 @@ async function stop() {
 try {
   if (process.argv.length !== 3) throw new Error('Usage: node src/index.js /absolute/path/config.json');
   const config = configSchema.parse(JSON.parse(readFileSync(process.argv[2], 'utf8')));
-  core = new CoreClient(config);
+  core = new HostRuntime(config);
   process.once('SIGINT', () => { void stop(); });
   process.once('SIGTERM', () => { void stop(); });
   if (config.transport === 'stdio') {

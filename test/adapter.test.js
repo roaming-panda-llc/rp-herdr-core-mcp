@@ -77,7 +77,7 @@ test('core uses pinned hello and correct params, handles split UTF-8 lines', asy
   assert.deepEqual(f.calls.map(x => x.method), ['hello', 'terminal.read']);
   assert.equal(f.core.sockets.size, 0);
 });
-for (const [name, override] of [['version', { version: '0.1.16' }], ['generation', { generation: 2 }], ['framing', { framed: true }], ['methods', { methods: [] }], ['malformed methods', { methods: 7 }]]) {
+for (const [name, override] of [['version', { version: '0.1.17' }], ['generation', { generation: 2 }], ['framing', { framed: true }], ['methods', { methods: [] }], ['malformed methods', { methods: 7 }]]) {
   test(`reject incompatible ${name} before operation`, async t => {
     const f = await fixture(t, () => assert.fail('Operation must not run'), override);
     await assert.rejects(f.core.call('terminal.list', {}), /compatible/);
@@ -110,7 +110,7 @@ test('config rejects accidental write enablement and unknown options', () => {
 test('tools list, bounded read/list and disabled send', async t => {
   const f = await fixture(t, (m, reply) => reply(m.method === 'terminal.list' ? { terminals: [{ address: 't1', created_ms: 1, title: 'a'.repeat(5000), status: { state: 'idle' } }, { address: 'remote/t2' }] } : { text: 'abcxyz', complete: true, how: 'screen' }));
   const client = await clientFor(t, f.core);
-  assert.deepEqual((await client.listTools()).tools.map(t => t.name), ['list_sessions', 'read_output', 'send_prompt']);
+  assert.deepEqual((await client.listTools()).tools.map(t => t.name), ['list_sessions', 'read_output', 'send_prompt', 'list_hosts', 'create_session']);
   const list = unpack(await client.callTool({ name: 'list_sessions', arguments: {} }));
   assert.equal(list.total, 1); assert.equal(list.sessions[0].title.length, 512);
   const output = unpack(await client.callTool({ name: 'read_output', arguments: { terminal: 't1', max_chars: 3 } }));
@@ -137,7 +137,7 @@ test('MCP stdio child discovers and reads through mock core and closes cleanly',
   const transport = new StdioClientTransport({ command: process.execPath, args: [resolve('src/index.js'), config], stderr: 'pipe' });
   const client = new Client({ name: 'test', version: '1' });
   t.after(() => client.close()); await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length, 3);
+  assert.equal((await client.listTools()).tools.length, 5);
   assert.equal(unpack(await client.callTool({ name: 'read_output', arguments: { terminal: 't1' } })).text, 'mock screen');
   await client.close();
 });
@@ -181,7 +181,7 @@ test('HTTP fails closed, rejects origin/host/body and serves authenticated offic
   const client = new Client({ name: 'test', version: '1' });
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
-  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['list_sessions', 'read_output', 'send_prompt']);
+  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['list_sessions', 'read_output', 'send_prompt', 'list_hosts', 'create_session']);
   assert.equal(unpack(await client.callTool({ name: 'list_sessions', arguments: {} })).total, 0);
 });
 
@@ -197,7 +197,7 @@ test('stdio process starts, discovers tools, and exits on client close without h
   const client = new Client({ name: 'test', version: '1' });
   t.after(async () => { await client.close(); await rm(dir, { recursive: true, force: true }); });
   await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length, 3);
+  assert.equal((await client.listTools()).tools.length, 5);
   await client.close();
 });
 
@@ -376,4 +376,16 @@ test('HTTP Host guard admits only the configured loopback port before bearer val
     guard({ method: 'POST', path: '/mcp', headers: { host } }, res, () => assert.fail('Missing bearer must not advance'));
     assert.equal(status, expected, host);
   }
+});
+
+test('reviewed hc 0.1.16 is accepted with the same pinned identity and plain protocol', async t => {
+  const f = await fixture(t, (_m, reply) => reply({ terminals: [] }), { version: '0.1.16' });
+  assert.deepEqual(await f.core.call('terminal.list', {}, 'test-core'), { terminals: [] });
+});
+test('terminal.run timeout reports unknown creation and never replays', async t => {
+  const f = await fixture(t, () => {}, { methods: ['terminal.run'] });
+  await assert.rejects(f.core.call('terminal.run', { argv: ['/opt/bin/pi'] }, 'test-core'), error => {
+    assert.equal(error.creation, 'unknown'); assert.match(error.message, /creation outcome is UNKNOWN/); return true;
+  });
+  assert.equal(f.calls.filter(c => c.method === 'terminal.run').length, 1);
 });

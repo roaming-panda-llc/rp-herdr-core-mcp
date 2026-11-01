@@ -1,5 +1,22 @@
 # Changes
 
+## 0.2.0
+
+- Added explicit named-host routing with pinned core identity on all operations,
+  backwards-compatible legacy local config, no cross-host fallback, and list_hosts
+  with independent failure reporting. Supports reviewed hc 0.1.15 and 0.1.16 only.
+- Added strict operator-configured SSH hc-connect bridge with explicit account,
+  selected session, known-host checking, bounded subprocess cleanup, and mandatory
+  auto-start opt-in. Unix existing-socket mode remains available.
+- Added opt-in trusted-core access and create_session via configured absolute-agent
+  argv profiles, model/provider argument variants and exact project aliases. No
+  caller shell/command/cwd, force-send, fake idle or automatic task injection.
+- Creation verifies startup and uses bounded request deduplication/labels for
+  reconciliation, explicitly not durable exactly-once. Cached receipts do not
+  claim current readiness; uncertain creation is never automatically replayed.
+- Added limits, tests and operator activation guidance. No host is automatically
+  activated, credential installed or trusted-core access granted by this release.
+
 ## 0.1.3
 
 - Corrected the HTTP integration fixture to use its actual assigned loopback port.

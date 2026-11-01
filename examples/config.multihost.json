@@ -1,0 +1,26 @@
+{
+  "transport": "stdio",
+  "defaultHost": "local",
+  "hosts": {
+    "local": {
+      "connection": { "type": "unix", "socketPath": "/Users/YOU/.local/state/herdr-core/default/default.sock" },
+      "coreId": "COPY-VERIFIED-LOCAL-CORE-ID",
+      "accessMode": "restricted",
+      "sendMode": "normal",
+      "sendAllowlist": []
+    },
+    "worker": {
+      "connection": {
+        "type": "ssh",
+        "destination": "agent@worker.example",
+        "hcPath": "/home/agent/.local/bin/hc",
+        "session": "default",
+        "allowCoreAutoStart": false
+      },
+      "coreId": "COPY-VERIFIED-SELECTED-REMOTE-CORE-ID",
+      "accessMode": "restricted",
+      "sendMode": "normal",
+      "sendAllowlist": []
+    }
+  }
+}

@@ -25,10 +25,12 @@ export class CoreClient {
         socket.destroy();
         if (error) {
           const sendDispatched = method === 'terminal.send' && sent;
-          const suffix = knownNotDelivered ? '; delivery: NOT SENT (core status check rejected before typing); no automatic retry' : sendDispatched ? '; delivery is UNKNOWN: inspect the terminal before any retry' : '';
+          const createDispatched = method === 'terminal.run' && sent;
+          const suffix = knownNotDelivered ? '; delivery: NOT SENT (core status check rejected before typing); no automatic retry' : createDispatched ? '; creation outcome is UNKNOWN: reconcile request_id before any new attempt; no automatic retry' : sendDispatched ? '; delivery is UNKNOWN: inspect the terminal before any retry' : '';
           const failure = new CoreError(`${error}${suffix}`);
           if (knownNotDelivered) failure.delivery = 'not_sent';
           else if (sendDispatched) failure.delivery = 'unknown';
+          if (createDispatched) failure.creation = 'unknown';
           reject(failure);
         } else resolve(result);
       };
@@ -50,7 +52,7 @@ export class CoreClient {
           try { message = JSON.parse(line); } catch { return finish('Invalid JSON from core'); }
           if (!message || message.jsonrpc !== '2.0' || message.id !== phase || (Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error'))) return finish('Invalid JSON-RPC response from core');
           if (message.error) {
-            // Exact, validated hc 0.1.15 terminal.send rejection only. input.rs
+            // Exact, validated hc 0.1.15/0.1.16 terminal.send rejection only. input.rs
             // returns status_mismatch in prepare, before type_in executes writes.
             const notSent = phase === 2 && method === 'terminal.send' &&
               message.error.code === -32000 && message.error.data?.kind === 'status_mismatch';
@@ -58,7 +60,7 @@ export class CoreClient {
           }
           if (phase === 1) {
             const hello = message.result;
-            if (hello?.version !== '0.1.15' || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible with pinned hc 0.1.15');
+            if (!['0.1.15', '0.1.16'].includes(hello?.version) || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible with supported hc 0.1.15/0.1.16');
             if (expectedCoreId && hello.core?.id !== expectedCoreId) return finish('Core identity mismatch; request not sent');
             phase = 2;
             sent = true;
