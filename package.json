@@ -1,0 +1,21 @@
+{
+  "name": "rp-herdr-core-mcp",
+  "version": "0.1.2",
+  "type": "module",
+  "description": "Narrow MCP adapter for herdr-core 0.1.15",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/config.js && node --check src/core.js && node --check src/server.js && node --check scripts/inspect-core.js && node --test",
+    "test:integration": "HC_MCP_INTEGRATION=1 node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "express": "5.2.1",
+    "zod": "4.6.7"
+  },
+  "license": "MIT"
+}

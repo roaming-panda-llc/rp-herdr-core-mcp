@@ -1,0 +1,1 @@
+{"mcpServers":{"rp-herdr-core-mcp":{"command":"/absolute/path/to/node","args":["/absolute/path/rp-herdr-core-mcp/src/index.js","/absolute/private/path/config.json"]}}}

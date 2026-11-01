@@ -1,0 +1,7 @@
+{
+  "socketPath": "/Users/YOU/.local/state/herdr-core/default/default.sock",
+  "transport": "stdio",
+  "sendAllowlist": [],
+  "timeoutMs": 15000,
+  "sendMode": "idle-only"
+}
