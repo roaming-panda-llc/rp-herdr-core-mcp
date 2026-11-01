@@ -1,5 +1,14 @@
 # Changes
 
+## 0.1.3
+
+- Corrected the HTTP integration fixture to use its actual assigned loopback port.
+  Node fetch strips custom Host headers, so prior probes inadvertently tested the
+  wrong port. Explicit Host probes now use node:http instead.
+- Added a configured-port Host regression and explicit official-SDK tool discovery
+  to the full HTTP round-trip test. No runtime auth/Host/core/send policy changes.
+- Full real-transport validation must still run in an environment allowing sockets.
+
 ## 0.1.2
 
 - Added operator-only `sendMode`: default `idle-only` preserves existing behavior;

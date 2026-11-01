@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import http from 'node:http';
 import { EventEmitter } from 'node:events';
 const realTransport = process.env.HC_MCP_INTEGRATION === '1';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -145,18 +146,34 @@ test('HTTP fails closed, rejects origin/host/body and serves authenticated offic
   const config = { publicOrigin: 'https://herdr.example.com', port: 8787, sendAllowlist: [] };
   assert.throws(() => makeHttpApp(f.core, config, undefined));
   const token = 'test-only-not-a-real-secret-'.repeat(3);
+  // Bind the mock listener first so the Host allowlist matches its real port.
+  // Node fetch removes user-supplied Host: never rely on a Host override here.
+  const listener = http.createServer();
+  listener.listen(0, '127.0.0.1'); await once(listener, 'listening');
+  config.port = listener.address().port;
   const app = makeHttpApp(f.core, config, token);
-  const listener = app.listen(0, '127.0.0.1'); await once(listener, 'listening');
+  listener.on('request', app);
   t.after(() => new Promise(r => { listener.closeAllConnections(); listener.close(r); }));
   const url = `http://127.0.0.1:${listener.address().port}/mcp`;
-  assert.equal((await fetch(url, { method: 'POST', headers: { host: 'herdr.example.com' } })).status, 401);
-  const headers = { authorization: `Bearer ${token}`, host: 'herdr.example.com', 'content-type': 'application/json' };
+  assert.equal((await fetch(url, { method: 'POST' })).status, 401);
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   assert.equal((await fetch(url, { method: 'POST', headers: { ...headers, origin: 'https://evil.test' }, body: '{}' })).status, 403);
-  assert.equal((await fetch(url, { method: 'POST', headers: { ...headers, host: 'evil.test' }, body: '{}' })).status, 403);
+  // Test literal Host handling using node:http, not fetch's ignored Host header.
+  const rawHostStatus = host => new Promise((resolve, reject) => {
+    const req = http.request(url, { method: 'POST', headers: { ...headers, host } }, res => {
+      const status = res.statusCode;
+      res.resume(); res.once('end', () => resolve(status)); res.once('error', reject);
+    });
+    req.setTimeout(2000, () => req.destroy(new Error('HTTP Host probe timed out')));
+    req.once('error', reject); req.end('{}');
+  });
+  assert.equal(await rawHostStatus('evil.test'), 403);
+  // A valid public Host reaches MCP parsing (rather than Host rejection).
+  assert.equal(await rawHostStatus('herdr.example.com'), 406);
   assert.equal((await fetch(url, { method: 'POST', headers, body: 'x'.repeat(70000) })).status, 413);
   for (const method of ['GET', 'HEAD']) {
     for (const path of ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']) {
-      const response = await fetch(new URL(path, url), { method, headers: { host: 'herdr.example.com' } });
+      const response = await fetch(new URL(path, url), { method });
       assert.equal(response.status, 404);
       assert.equal(response.headers.get('www-authenticate'), null);
     }
@@ -164,6 +181,7 @@ test('HTTP fails closed, rejects origin/host/body and serves authenticated offic
   const client = new Client({ name: 'test', version: '1' });
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
+  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['list_sessions', 'read_output', 'send_prompt']);
   assert.equal(unpack(await client.callTool({ name: 'list_sessions', arguments: {} })).total, 0);
 });
 
@@ -346,4 +364,16 @@ test('normal mode cannot grant write access without a lifetime allowlist', async
   const core = { call() { assert.fail('No core calls expected for an unapproved send'); } };
   const client = await clientFor(t, core, { sendMode: 'normal', coreId: 'test-core', sendAllowlist: [] });
   assert.equal((await client.callTool({ name: 'send_prompt', arguments: { terminal: 't1', prompt: 'follow up' } })).isError, true);
+});
+
+
+test('HTTP Host guard admits only the configured loopback port before bearer validation', () => {
+  const app = makeHttpApp({}, { publicOrigin: 'https://herdr.example.com', port: 43210 }, 'test-only-not-a-real-secret-'.repeat(3));
+  const guard = app.router.stack[0].handle;
+  for (const [host, expected] of [['127.0.0.1:43210', 401], ['127.0.0.1:8787', 403], ['herdr.example.com', 401], ['evil.test', 403]]) {
+    let status;
+    const res = { set() { return this; }, status(value) { status = value; return this; }, end() {} };
+    guard({ method: 'POST', path: '/mcp', headers: { host } }, res, () => assert.fail('Missing bearer must not advance'));
+    assert.equal(status, expected, host);
+  }
 });

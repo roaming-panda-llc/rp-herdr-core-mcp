@@ -8,7 +8,7 @@ const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32
 const textResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const clip = (value, length = 512) => typeof value === 'string' ? value.slice(0, length) : null;
 export function makeServer(core, config) {
-  const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.1.2' });
+  const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.1.3' });
   const wrap = fn => async (args, extra) => {
     try { return textResult(await fn(args, extra)); }
     catch (error) { return { isError: true, content: [{ type: 'text', text: error.message.slice(0, 1000) }] }; }

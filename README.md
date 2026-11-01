@@ -1,7 +1,7 @@
 # rp-herdr-core-mcp
 
 A small single-user MCP adapter for **herdr-core 0.1.15**, using the official MCP
-SDK. Version **0.1.2**. MIT licensed. macOS/Linux; no Windows pipe support.
+SDK. Version **0.1.3**. MIT licensed. macOS/Linux; no Windows pipe support.
 
 Three tools expose existing local terminals: `list_sessions`, `read_output`, and
 `send_prompt`. No extra LLM, agent spawning, shell-execution tool, or core lifecycle
