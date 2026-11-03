@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Webhook } from 'standardwebhooks';
 import { z } from 'zod';
-import dns from 'node:dns/promises';
+import { validateCallbackUrl, webhookFetch } from './webhook.js';
 
 const eventsCatalog = [
   {
@@ -129,96 +129,12 @@ function makeTerminalKey(hostId, terminalAddress) {
   return `${hostId}|${terminalAddress}`;
 }
 
-function isPrivateOrLoopbackIp(ip) {
-  // IPv4
-  if (ip.includes('.')) {
-    const parts = ip.split('.').map(Number);
-    // 127.0.0.0/8 - loopback
-    if (parts[0] === 127) return true;
-    // 10.0.0.0/8 - private
-    if (parts[0] === 10) return true;
-    // 172.16.0.0/12 - private
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-    // 192.168.0.0/16 - private
-    if (parts[0] === 192 && parts[1] === 168) return true;
-    // 169.254.0.0/16 - link-local
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    // 0.0.0.0/8 - reserved
-    if (parts[0] === 0) return true;
-    // 224.0.0.0/4 - multicast
-    if (parts[0] >= 224 && parts[0] <= 239) return true;
-    // 240.0.0.0/4 - reserved
-    if (parts[0] >= 240) return true;
-    return false;
-  }
-  // IPv6
-  if (ip.includes(':')) {
-    const lower = ip.toLowerCase();
-    // ::1/128 - loopback
-    if (lower === '::1') return true;
-    // ::/128 - unspecified
-    if (lower === '::') return true;
-    // fe80::/10 - link-local
-    if (lower.startsWith('fe80:')) return true;
-    // fc00::/7 - unique local (private)
-    const firstHextet = parseInt(lower.split(':')[0], 16);
-    if (!isNaN(firstHextet) && (firstHextet & 0xfe00) === 0xfc00) return true;
-    // ff00::/8 - multicast
-    if (lower.startsWith('ff')) return true;
-    // 2001:db8::/32 - documentation
-    if (lower.startsWith('2001:db8:')) return true;
-    return false;
-  }
-  return false;
-}
-
-async function resolveAndValidateHostname(hostname) {
-  try {
-    const results = await dns.lookup(hostname, { all: true, family: 0 });
-    for (const { address, family } of results) {
-      if (isPrivateOrLoopbackIp(address)) {
-        return { safe: false, reason: `resolved to ${family === 6 ? 'IPv6' : 'IPv4'} ${address} (private/loopback/link-local)` };
-      }
-    }
-    return { safe: true, addresses: results.map(r => r.address) };
-  } catch (error) {
-    return { safe: false, reason: `DNS resolution failed: ${error.message}` };
-  }
-}
-
-async function validateCallbackUrl(url, allowPrivateForTesting = false) {
-  const parsed = new URL(url);
-  if (parsed.protocol !== 'https:') {
-    throw new Error('Callback URL must use HTTPS');
-  }
-  const hostname = parsed.hostname;
-  
-  // Quick hostname checks before DNS resolution
-  if (hostname === 'localhost' || hostname === 'localhost.localdomain') {
-    throw new Error('Callback URL must not target localhost');
-  }
-  
-  if (!allowPrivateForTesting) {
-    // Resolve and validate all IPs
-    const validation = await resolveAndValidateHostname(hostname);
-    if (!validation.safe) {
-      throw new Error(`Callback URL validation failed: ${validation.reason}`);
-    }
-  } else {
-    // Testing mode - still check literal IPs and localhost
-    if (isPrivateOrLoopbackIp(hostname)) {
-      throw new Error('Callback URL must not target private/loopback/link-local addresses');
-    }
-  }
-  
-  return parsed;
-}
-
 function validateSecret(secret) {
   if (!secret.startsWith('whsec_')) {
     throw new Error('Secret must start with whsec_');
   }
   const base64 = secret.slice(6);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) throw new Error('Secret must be valid base64');
   let decoded;
   try {
     decoded = Buffer.from(base64, 'base64');
@@ -244,7 +160,8 @@ function getEventInputZodSchema(eventName) {
 }
 
 export class EventManager {
-  constructor(core, config) {
+  constructor(core, config, { transport = webhookFetch } = {}) {
+    this.transport = transport;
     this.core = core;
     this.config = config;
     this.subscriptions = new Map();
@@ -475,7 +392,7 @@ export class EventManager {
     return { events: eventsCatalog, nextCursor: null };
   }
 
-  async handleSubscribe(owner, params, allowPrivateForTesting = false) {
+  async handleSubscribe(owner, params) {
     const { name, arguments: args = {}, delivery, cursor, ttlMs } = params;
     
     const eventDef = this.getEventDefinition(name);
@@ -488,7 +405,7 @@ export class EventManager {
     }
 
     // Validate callback URL with SSRF protection
-    await validateCallbackUrl(delivery.url, allowPrivateForTesting);
+    validateCallbackUrl(delivery.url);
     validateSecret(delivery.secret);
 
     // Validate arguments against event's inputSchema
@@ -568,7 +485,7 @@ export class EventManager {
     const timeout = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
     
     try {
-      const response = await fetch(url, {
+      const response = await this.transport(url, {
         method: 'POST',
         redirect: 'error', // Disable redirects - SSRF protection
         signal: controller.signal,
@@ -683,7 +600,7 @@ export class EventManager {
       this.outbox.shift();
       
       try {
-        const response = await fetch(item.subscription.delivery.url, {
+        const response = await this.transport(item.subscription.delivery.url, {
           method: 'POST',
           redirect: 'error',
           signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),

@@ -71,9 +71,7 @@ export function makeServer(core, config) {
         const auth = extra?.requestInfo?.headers?.authorization;
         const owner = auth ? `bearer:${createHash('sha256').update(auth).digest('hex').slice(0, 16)}` : 'unknown';
         try {
-          // In test environment, allow private IPs for localhost callbacks
-          const allowPrivateForTesting = process.env.NODE_ENV === 'test';
-          return await eventManager.handleSubscribe(owner, params, allowPrivateForTesting);
+          return await eventManager.handleSubscribe(owner, params);
         } catch (error) {
           throw new McpError(ErrorCode.InvalidParams, error.message);
         }
