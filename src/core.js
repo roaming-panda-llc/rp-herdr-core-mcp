@@ -11,7 +11,7 @@ export class CoreClient {
     this.closed = true;
     for (const socket of this.sockets) socket.destroy(new CoreError('Adapter shutting down'));
   }
-  call(method, params, expectedCoreId, { signal } = {}) {
+  call(method, params, expectedCoreId, { signal, deadlineMs } = {}) {
     if (this.closed || this.sockets.size >= this.maxConnections) return Promise.reject(new CoreError('Adapter unavailable or busy; no request was sent'));
     return new Promise((resolve, reject) => {
       const socket = this.connect({ path: this.socketPath });
@@ -63,6 +63,7 @@ export class CoreClient {
             if (!['0.1.15', '0.1.16'].includes(hello?.version) || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible with supported hc 0.1.15/0.1.16');
             if (expectedCoreId && hello.core?.id !== expectedCoreId) return finish('Core identity mismatch; request not sent');
             if (signal?.aborted) return finish('Request cancelled before dispatch; no request was sent');
+            if (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || Date.now() >= deadlineMs)) return finish('Request approval expired before dispatch; no request was sent');
             phase = 2;
             sent = true;
             write(2, method, params);

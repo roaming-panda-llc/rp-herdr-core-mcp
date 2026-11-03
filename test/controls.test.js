@@ -103,7 +103,10 @@ async function wire(t, failure, override = {}) {
       let i;
       while ((i = buffer.indexOf('\n')) >= 0) {
         const m = JSON.parse(buffer.slice(0, i)); buffer = buffer.slice(i + 1); calls.push(m);
-        if (m.method === 'hello') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: hello }) + '\n');
+        if (m.method === 'hello') {
+          const reply = () => s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: hello }) + '\n');
+          if (failure === 'slow-hello') setTimeout(reply, 40); else reply();
+        }
         else if (failure === 'disconnect') s.destroy();
         else if (failure === 'shape') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: {} }) + '\n');
         else if (failure === 'rejected') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32000, data: { kind: 'status_mismatch' } } }) + '\n');
@@ -168,4 +171,18 @@ test('send_prompt still rejects Escape and other raw controls before touching co
   const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
   t.after(async () => { await client.close(); await server.close(); });
   for (const prompt of ['\x1b', '\x03', '\r']) assert.equal((await client.callTool({ name: 'send_prompt', arguments: { terminal: 't1', prompt } })).isError, true);
+});
+
+test('approval expiring during core handshake prevents key dispatch', async t => {
+  const f = await wire(t, 'slow-hello');
+  await assert.rejects(f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core', { deadlineMs: Date.now() + 15 }), /expired before dispatch/);
+  assert.ok(!f.calls.some(c => c.method === 'terminal.keys'));
+});
+test('Escape passes the exact approval expiry to the core dispatch gate', async () => {
+  const f = fixture(), call = f.ctx.core.call;
+  f.ctx.core.call = async (...a) => {
+    if (a[0] === 'terminal.keys') assert.equal(a[3].deadlineMs, f.approval.expires_ms);
+    return call(...a);
+  };
+  await pressEscape(f.ctx, args);
 });
