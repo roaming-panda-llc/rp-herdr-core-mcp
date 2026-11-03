@@ -96,3 +96,18 @@ main merge, or credential/access/security change was run. The parent's read-only
 Air findings are external evidence, not tests performed by this checkout. Warnings
 for untested versions cannot guarantee their mutation behavior. No Events or
 escape-only-control branch changes are part of this isolated work.
+
+## Events integrated with current main — 2026-11-03
+
+Main `e2d7eecb8a715fb112f2b5e17f7711a2e0476891` is preserved as an ancestor of
+`feature/mcp-events-v2`; compatibility and desktopSpaces regressions pass. The
+merged baseline passed 151/151 integration tests. After lifecycle/storage and
+stdio-entrypoint regression repairs, `npm run check` and `npm test` each passed
+154 tests, failed 0, skipped 3; `npm run test:integration` passed all 157, with
+zero failures/skips. `git diff --check` passed. Node v24.19.0/npm 11.9.0.
+
+See EVENTS-READINESS.md for independent code-review findings, the real-entrypoint
+stdio test with mocked DNS/HTTPS, and operational prerequisites. Live tunnel
+persistence, callback subscriptions and ChatGPT wake-up remain unverified.
+No merge to main, deployment, private config edit, access change or live callback
+was performed in this review.

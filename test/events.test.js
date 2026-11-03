@@ -235,3 +235,30 @@ test('shared process manager survives individual MCP request server closure', as
   await second.client.request({ method: 'events/unsubscribe', params: { ...params, delivery } }, ResultSchema);
   assert.equal(manager.subscriptions.size, 0);
 });
+
+test('MCP transport closure stops an owned manager through the SDK close hook', async t => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const directory = await mkdtemp(join(tmpdir(), 'herdr-close-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = configSchema.parse({ socketPath: '/tmp/mock.sock', events: { enabled: true, stateDirectory: directory } });
+  const server = makeServer(mockCore('test-core'), config);
+  const client = new Client({ name: 'test', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  assert.equal(typeof server.server.onclose, 'function');
+  await client.close();
+  // Reconnecting a stopped manager must not create new subscriptions.
+  const [c, d] = InMemoryTransport.createLinkedPair();
+  await server.connect(c);
+  const next = new Client({ name: 'test', version: '1' });
+  await next.connect(d);
+  t.after(async () => { await next.close(); await server.close(); });
+  await assert.rejects(next.request({ method: 'events/subscribe', params: { name: 'terminal.created', delivery: { mode: 'webhook', url: 'https://callback.example', secret: validSecret } } }, ResultSchema), /stopping/);
+});
+
+test('discovery alone does not accept subscriptions without configured durable storage', async t => {
+  const { client } = await setup(t, true);
+  await assert.rejects(client.request({ method: 'events/subscribe', params: { name: 'terminal.created', delivery: { mode: 'webhook', url: 'https://callback.example/hooks', secret: validSecret } } }, ResultSchema), /events.stateDirectory/);
+});

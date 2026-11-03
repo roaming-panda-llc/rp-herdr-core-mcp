@@ -39,8 +39,10 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
     };
     
     // Also handle transport close
-    server.onclose = async () => {
-      if (!sharedEventManager) await eventManager.stopPolling();
+    const onTransportClose = server.server.onclose;
+    server.server.onclose = () => {
+      onTransportClose?.();
+      if (!sharedEventManager) void eventManager.stopPolling();
     };
 
     // Define event request schemas with method literals

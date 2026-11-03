@@ -93,3 +93,12 @@ Use `npm ci --ignore-scripts`, `npm run check`, and `npm run test:integration`.
 Integration tests use temporary mock core sockets and loopback HTTP only.
 Webhook tests use injected transport/clock/DNS, never live callbacks or private
 remote endpoints. See `VALIDATION.md` for this branch's measured results.
+
+## Stdio/tunnel readiness
+
+See [EVENTS-READINESS.md](EVENTS-READINESS.md) for the current-main integration
+review, entrypoint regression evidence, and the remaining live checklist. The
+stdio manager lives for its adapter process, not for an individual MCP request.
+The tunnel must keep one process alive during idle periods; multiple processes
+must not share this single-writer store. Successful capability discovery alone
+neither creates a subscription nor proves a live ChatGPT wake-up.

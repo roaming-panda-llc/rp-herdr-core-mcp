@@ -1,4 +1,4 @@
-import { constants, openSync, closeSync, readFileSync, writeFileSync, fsyncSync, renameSync, mkdirSync, lstatSync, unlinkSync } from 'node:fs';
+import { constants, openSync, closeSync, readFileSync, writeFileSync, fsyncSync, renameSync, mkdirSync, lstatSync, unlinkSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 
@@ -15,6 +15,7 @@ export class EventStore {
     this.directory = directory;
     this.path = join(directory, 'events.enc');
     const keyPath = join(directory, 'events.key');
+    if (existsSync(this.path) && !existsSync(keyPath)) throw new Error('Event storage key is missing; restore the original key');
     try {
       const fd = openSync(keyPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       try { writeFileSync(fd, randomBytes(32)); fsyncSync(fd); } finally { closeSync(fd); }

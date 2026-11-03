@@ -308,3 +308,26 @@ test('shutdown aborts a pending callback and preserves its durable queue', async
   await processing;
   assert.equal(new EventStore(directory).load().outbox.length, 1);
 });
+
+test('shutdown during the initial poll cannot install a new polling timer', async t => {
+  const { manager } = setup(t);
+  let release;
+  manager.core = { call: () => new Promise(resolve => { release = resolve; }) };
+  manager.config.coreId = 'test-core';
+  const starting = manager.startPolling();
+  const stopping = manager.stopPolling();
+  release({ terminals: [] });
+  await Promise.all([starting, stopping]);
+  assert.equal(manager.timer, undefined);
+  assert.equal(manager.shuttingDown, true);
+});
+
+test('missing storage key is not replaced when encrypted subscriptions already exist', async t => {
+  const { manager, directory } = setup(t);
+  manager.persist();
+  const { unlinkSync, existsSync } = await import('node:fs');
+  const keyPath = join(directory, 'events.key');
+  unlinkSync(keyPath);
+  assert.throws(() => new EventStore(directory), /restore the original key/);
+  assert.equal(existsSync(keyPath), false);
+});

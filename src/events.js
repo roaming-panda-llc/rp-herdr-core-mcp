@@ -178,7 +178,9 @@ export class EventManager {
     if (this.core?.hosts instanceof Map) {
       this.pollingHosts = [...this.core.hosts].filter(([, h]) => h.config.coreId).map(([hostId, h]) => ({ hostId, coreId: h.config.coreId, core: h.core }));
     } else if (this.core && this.config.coreId) this.pollingHosts = [{ hostId: 'local', coreId: this.config.coreId, core: this.core }];
-    await this.pollTerminals();
+    this.pollPromise = this.pollTerminals();
+    try { await this.pollPromise; } finally { this.pollPromise = null; }
+    if (this.shuttingDown) return;
     this.timer = setInterval(() => {
       if (!this.pollPromise && !this.shuttingDown) {
         this.pollPromise = this.pollTerminals().catch(() => {}).finally(() => { this.pollPromise = null; });

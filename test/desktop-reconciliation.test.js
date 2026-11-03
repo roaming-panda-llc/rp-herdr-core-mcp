@@ -104,3 +104,19 @@ test('missing verification record returns an unverified receipt without a deskto
  assert.equal(result.desktop_space, null); assert.equal(result.desktop_visibility_requested, false);
  assert.equal(f.calls.filter(c => c.method === 'terminal.run').length, 1);
 });
+
+test('Events emission preserves desktop placement and project metadata without duplicate creation', async () => {
+ const f = fixture(); const events = [];
+ const manager = { deliverEvent(name, payload) { events.push({ name, payload }); } };
+ const first = await createSession(f.host, request, undefined, manager);
+ await createSession(f.host, request, undefined, manager);
+ assert.equal(first.desktop_space, 'workspace-demo');
+ assert.equal(first.desktop_visibility_requested, true);
+ const labels = f.calls.find(c => c.method === 'terminal.run').params.labels;
+ assert.equal(labels['herdr.space'], 'workspace-demo');
+ assert.equal(labels.rp_mcp_project, 'demo');
+ assert.equal(events.length, 1);
+ assert.equal(events[0].name, 'terminal.created');
+ assert.equal(events[0].payload.project, 'demo');
+ assert.equal(events[0].payload.created_ms, 100);
+});

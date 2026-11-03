@@ -23,7 +23,7 @@ export async function createSession(host, input, signal, eventManager) {
   }
   if (ledger.size >= 256) throw new Error('Creation request ledger is full; reconcile outstanding requests before restarting adapter');
   const result = (async () => {
-    const labels = { rp_mcp_request: input.request_id, rp_mcp_fingerprint: fingerprint, rp_mcp_profile: input.profile };
+    const labels = { rp_mcp_request: input.request_id, rp_mcp_fingerprint: fingerprint, rp_mcp_profile: input.profile, rp_mcp_project: input.project };
     if (desktopSpace) labels['herdr.space'] = desktopSpace;
     const snapshot = await core.call('terminal.list', { all: true, labels: { rp_mcp_request: input.request_id } }, config.coreId);
     if (!Array.isArray(snapshot?.terminals)) throw new Error('Cannot reconcile creation request: invalid terminal list');

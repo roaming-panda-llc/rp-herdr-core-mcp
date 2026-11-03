@@ -8,8 +8,8 @@ let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
-  await closeEvents?.();
   core?.close();
+  await closeEvents?.();
   listener?.close();
   listener?.closeAllConnections();
   await server?.close();
@@ -23,8 +23,8 @@ try {
   if (config.transport === 'stdio') {
     server = makeServer(core, config);
     const transport = new StdioServerTransport();
-    await server.connect(transport);
     process.stdin.once('end', () => { void stop(); });
+    await server.connect(transport);
   } else {
     const app = makeHttpApp(core, config, process.env.HERDR_MCP_TOKEN);
     closeEvents = app.locals.closeEvents;
