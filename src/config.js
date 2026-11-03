@@ -3,6 +3,7 @@ import path from 'node:path';
 export const idSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/);
 const absolutePath = z.string().min(1).max(1024).refine(s => s.startsWith('/') && !/[\x00-\x1f\x7f]/.test(s) && path.posix.normalize(s) === s, 'Use a normalized absolute Unix path');
 const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32);
+const spaceId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/).max(128);
 const policy = {
   coreId: z.string().min(1).max(256).optional(),
   accessMode: z.enum(['restricted', 'trusted-core']).default('restricted'),
@@ -16,8 +17,9 @@ const profile = z.object({
   executable: absolutePath,
   args: z.array(argument).max(40).default([]),
   variants: z.record(idSchema, z.array(argument).max(20)).default({}).refine(v => Object.keys(v).length <= 16, 'At most 16 variants'),
-  projects: z.record(idSchema, absolutePath)
-}).strict().refine(p => Object.keys(p.projects).length > 0 && Object.keys(p.projects).length <= 32, 'Configure 1–32 exact project directories');
+  projects: z.record(idSchema, absolutePath),
+  desktopSpaces: z.record(idSchema, spaceId).default({}).refine(s => Object.keys(s).length <= 32, 'At most 32 desktop space mappings')
+}).strict().refine(p => Object.keys(p.projects).length > 0 && Object.keys(p.projects).length <= 32, 'Configure 1–32 exact project directories').refine(p => Object.keys(p.desktopSpaces).every(k => Object.prototype.hasOwnProperty.call(p.projects, k)), 'desktopSpaces keys must be configured projects');
 const host = z.object({
   ...policy,
   connection: z.discriminatedUnion('type', [

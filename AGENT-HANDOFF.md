@@ -3,7 +3,7 @@
 Preserve existing hc sessions, state, credentials, socket paths and approved terminal
 lifetimes. This package does not authorize deployment or security-setting changes.
 
-1. Read README and VALIDATION. Verify trusted Node >=22 and hc 0.1.15/0.1.16; do not
+1. Read README and VALIDATION. Verify trusted Node >=22 and reviewed hc 0.1.15/0.1.16/0.1.17 (other versions warn); do not
    automatically upgrade, downgrade or restart hc.
 2. Create a user-owned project directory such as `~/Projects/rp-herdr-core-mcp`.
    Preserve an existing installation as rollback; do not delete or overwrite its

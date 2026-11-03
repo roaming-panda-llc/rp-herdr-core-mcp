@@ -1,9 +1,12 @@
 import net from 'node:net';
 
+export const TESTED_CORE_VERSIONS = Object.freeze(['0.1.15', '0.1.16', '0.1.17']);
+
 export class CoreError extends Error {}
 export class CoreClient {
-  constructor({ socketPath, timeoutMs = 15000, maxBytes = 1048576, maxConnections = 8, connect = net.createConnection }) {
-    Object.assign(this, { socketPath, timeoutMs, maxBytes, maxConnections, connect });
+  constructor({ socketPath, timeoutMs = 15000, maxBytes = 1048576, maxConnections = 8, connect = net.createConnection, warn = message => console.error(message) }) {
+    Object.assign(this, { socketPath, timeoutMs, maxBytes, maxConnections, connect, warn });
+    this.warnedVersions = new Set();
     this.sockets = new Set();
     this.closed = false;
   }
@@ -16,7 +19,7 @@ export class CoreClient {
     return new Promise((resolve, reject) => {
       const socket = this.connect({ path: this.socketPath });
       this.sockets.add(socket);
-      let buffer = Buffer.alloc(0), total = 0, phase = 1, settled = false, sent = false;
+      let buffer = Buffer.alloc(0), total = 0, phase = 1, settled = false, sent = false, testedVersion = false;
       const finish = (error, result, knownNotDelivered = false) => {
         if (settled) return;
         settled = true;
@@ -52,16 +55,21 @@ export class CoreClient {
           try { message = JSON.parse(line); } catch { return finish('Invalid JSON from core'); }
           if (!message || message.jsonrpc !== '2.0' || message.id !== phase || (Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error'))) return finish('Invalid JSON-RPC response from core');
           if (message.error) {
-            // Exact, validated hc 0.1.15/0.1.16 terminal.send rejection only. input.rs
+            // Exact, validated hc 0.1.15/0.1.16/0.1.17 terminal.send rejection only. input.rs
             // returns status_mismatch in prepare, before type_in executes writes.
-            const notSent = phase === 2 && method === 'terminal.send' &&
+            const notSent = testedVersion && phase === 2 && method === 'terminal.send' &&
               message.error.code === -32000 && message.error.data?.kind === 'status_mismatch';
             return finish(`Core rejected request (${String(message.error.data?.kind ?? message.error.code).slice(0, 100)})`, undefined, notSent);
           }
           if (phase === 1) {
             const hello = message.result;
-            if (!['0.1.15', '0.1.16'].includes(hello?.version) || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible with supported hc 0.1.15/0.1.16');
+            if (typeof hello?.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$/.test(hello.version) || hello.version.length > 128 || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible: invalid version metadata, generation, framing or required method');
             if (expectedCoreId && hello.core?.id !== expectedCoreId) return finish('Core identity mismatch; request not sent');
+            testedVersion = TESTED_CORE_VERSIONS.includes(hello.version);
+            if (!testedVersion && !this.warnedVersions.has(hello.version) && this.warnedVersions.size < 16) {
+              this.warnedVersions.add(hello.version);
+              this.warn(`Warning: hc ${JSON.stringify(hello.version)} is untested (tested: ${TESTED_CORE_VERSIONS.join(', ')}). Protocol checks passed; behavior may differ. Mutation errors remain unknown outcomes; inspect before retrying.`);
+            }
             phase = 2;
             sent = true;
             write(2, method, params);

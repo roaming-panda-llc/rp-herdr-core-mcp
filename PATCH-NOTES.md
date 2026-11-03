@@ -1,5 +1,19 @@
 # Changes
 
+## Unreleased — core compatibility
+
+- Reviewed core 0.1.17 against official tagged source and added it to the tested
+  versions. Untested older/newer versions now warn on stderr instead of failing
+  solely because of their version. Protocol generation, plain framing, method
+  availability, JSON-RPC validation and configured core identity remain mandatory.
+- Known non-delivery classification for the exact status-mismatch rejection is
+  limited to reviewed versions. Untested-version mutation errors remain unknown;
+  requests are never automatically retried. Successful mutation replies remain
+  usable, subject to the existing policy and receipt checks.
+- Added synthetic 0.1.17 fixtures and protocol-level regressions for reads, lists,
+  creation reconciliation, guarded sends, persistence failures, version warnings,
+  and unchanged hard guards. No Events or escape-only-control changes included.
+
 ## 0.2.0
 
 - Added explicit named-host routing with pinned core identity on all operations,
