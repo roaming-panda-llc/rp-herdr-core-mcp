@@ -53,7 +53,7 @@ export async function pressEscape(ctx, input, signal) {
     await verify();
     check();
     dispatched = true;
-    const result = await ctx.core.call('terminal.keys', { terminal: args.terminal, keys: ['esc'] }, ctx.config.coreId, { signal });
+    const result = await ctx.core.call('terminal.keys', { terminal: args.terminal, keys: ['esc'] }, ctx.config.coreId, { signal, deadlineMs: approval.expires_ms });
     if (!Number.isSafeInteger(result?.turn) || result.turn < 0 || !(result.status === null || typeof result.status === 'string')) throw new Error('Invalid Escape response; delivery is UNKNOWN; read back before any new approval; no automatic retry');
     return { host: ctx.id, terminal: args.terminal, action_id: args.action_id, delivery: 'core_acknowledged', ui_dismissed: 'unverified', readback_required: true, preflight_status: approval.status, atomic_status_guard: null, atomic_lifetime_guard: false, turn: result.turn, status: result.status };
   } finally {

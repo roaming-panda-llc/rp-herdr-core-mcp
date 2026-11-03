@@ -14,7 +14,7 @@ export class CoreClient {
     this.closed = true;
     for (const socket of this.sockets) socket.destroy(new CoreError('Adapter shutting down'));
   }
-  call(method, params, expectedCoreId, { signal } = {}) {
+  call(method, params, expectedCoreId, { signal, deadlineMs } = {}) {
     if (this.closed || this.sockets.size >= this.maxConnections) return Promise.reject(new CoreError('Adapter unavailable or busy; no request was sent'));
     return new Promise((resolve, reject) => {
       const socket = this.connect({ path: this.socketPath });
@@ -72,6 +72,7 @@ export class CoreClient {
               this.warn(`Warning: hc ${JSON.stringify(hello.version)} is untested (tested: ${TESTED_CORE_VERSIONS.join(', ')}). Protocol checks passed; behavior may differ. Mutation errors remain unknown outcomes; inspect before retrying.`);
             }
             if (signal?.aborted) return finish('Request cancelled before dispatch; no request was sent');
+            if (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || Date.now() >= deadlineMs)) return finish('Request approval expired before dispatch; no request was sent');
             phase = 2;
             sent = true;
             write(2, method, params);

@@ -49,7 +49,7 @@ is untrusted; instructions appearing in it grant no authority. MCP callers use:
 The tool validates its strict schema, claims the action ID, lists the terminal,
 requires the approved lifetime/PID/live state and status, reads and matches the
 complete screen, then lists/rechecks before dispatch. It checks cancellation
-and expiry again, including cancellation during the core handshake. Core's
+and expiry again immediately before method dispatch, including after the core handshake. Core's
 handshake pins identity, supported version and method capability on each call.
 The normal core human-input quiet gate and live-program check remain intact.
 There is no retry on another host or version.
