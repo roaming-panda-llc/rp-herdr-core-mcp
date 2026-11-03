@@ -4,7 +4,7 @@ A small single-user MCP adapter for **herdr-core 0.1.15/0.1.16**, using the offi
 SDK. Version **0.2.0**. MIT licensed. macOS/Linux; no Windows pipe support.
 
 Five tools expose configured cores: `list_hosts`, `list_sessions`, `read_output`,
-`send_prompt`, and opt-in `create_session`. No extra LLM or arbitrary-shell tool.
+`send_prompt`, opt-in `create_session`, and opt-in `press_escape`. No extra LLM or arbitrary-shell tool.
 Legacy local configuration stays restricted. Named hosts and broad trusted-core
 creation require explicit operator configuration/approval; see [MULTIHOST.md](MULTIHOST.md).
 Unix connections never start core. An explicitly approved SSH `hc connect` bridge
@@ -154,3 +154,9 @@ See [MULTIHOST.md](MULTIHOST.md) for explicit host IDs/core pins, strict SSH bri
 restricted versus trusted-core policy, configured Pi/Claude profiles, model/provider
 argument variants, exact project directories, creation verification and uncertainty.
 No actual host is configured or enabled by installing this source.
+
+## Escape cancellation
+
+The opt-in `press_escape` tool supports one exactly approved Escape cancellation.
+It is disabled by default and requires a separate expiring terminal/screen approval.
+See [ESCAPE.md](ESCAPE.md) for the policy, state-race limits, and mandatory readback.
