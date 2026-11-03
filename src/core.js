@@ -14,7 +14,7 @@ export class CoreClient {
     this.closed = true;
     for (const socket of this.sockets) socket.destroy(new CoreError('Adapter shutting down'));
   }
-  call(method, params, expectedCoreId) {
+  call(method, params, expectedCoreId, { signal } = {}) {
     if (this.closed || this.sockets.size >= this.maxConnections) return Promise.reject(new CoreError('Adapter unavailable or busy; no request was sent'));
     return new Promise((resolve, reject) => {
       const socket = this.connect({ path: this.socketPath });
@@ -27,9 +27,9 @@ export class CoreClient {
         this.sockets.delete(socket);
         socket.destroy();
         if (error) {
-          const sendDispatched = method === 'terminal.send' && sent;
+          const sendDispatched = ['terminal.send', 'terminal.keys'].includes(method) && sent;
           const createDispatched = method === 'terminal.run' && sent;
-          const suffix = knownNotDelivered ? '; delivery: NOT SENT (core status check rejected before typing); no automatic retry' : createDispatched ? '; creation outcome is UNKNOWN: reconcile request_id before any new attempt; no automatic retry' : sendDispatched ? '; delivery is UNKNOWN: inspect the terminal before any retry' : '';
+          const suffix = knownNotDelivered ? '; delivery: NOT SENT (core status check rejected before typing); no automatic retry' : createDispatched ? '; creation outcome is UNKNOWN: reconcile request_id before any new attempt; no automatic retry' : sendDispatched ? '; delivery is UNKNOWN: inspect the terminal before any retry; no automatic retry' : '';
           const failure = new CoreError(`${error}${suffix}`);
           if (knownNotDelivered) failure.delivery = 'not_sent';
           else if (sendDispatched) failure.delivery = 'unknown';
@@ -65,14 +65,18 @@ export class CoreClient {
             const hello = message.result;
             if (typeof hello?.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$/.test(hello.version) || hello.version.length > 128 || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible: invalid version metadata, generation, framing or required method');
             if (expectedCoreId && hello.core?.id !== expectedCoreId) return finish('Core identity mismatch; request not sent');
+            if (method === 'terminal.keys' && !['0.1.15', '0.1.16'].includes(hello.version)) return finish('Escape requires reviewed hc 0.1.15/0.1.16; no request was sent');
             testedVersion = TESTED_CORE_VERSIONS.includes(hello.version);
             if (!testedVersion && !this.warnedVersions.has(hello.version) && this.warnedVersions.size < 16) {
               this.warnedVersions.add(hello.version);
               this.warn(`Warning: hc ${JSON.stringify(hello.version)} is untested (tested: ${TESTED_CORE_VERSIONS.join(', ')}). Protocol checks passed; behavior may differ. Mutation errors remain unknown outcomes; inspect before retrying.`);
             }
+            if (signal?.aborted) return finish('Request cancelled before dispatch; no request was sent');
             phase = 2;
             sent = true;
             write(2, method, params);
+          } else if (method === 'terminal.keys' && (!Number.isSafeInteger(message.result?.turn) || message.result.turn < 0 || !(message.result.status === null || typeof message.result.status === 'string'))) {
+            finish('Invalid terminal.keys result');
           } else finish(null, message.result);
         }
       });
