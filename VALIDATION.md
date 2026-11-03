@@ -49,8 +49,9 @@ without dependency or lockfile changes.
 After callback transport repair (`1d552a8`), `npm run test:integration` passed
 86/86 tests, zero failures/skips. After durable manager/replay repairs:
 
-- `npm run check`: 102 passed, 0 failed, 2 intentionally skipped (104 total).
-- `npm run test:integration`: 104 passed, 0 failed, 0 skipped.
+- `npm run check`: 104 passed, 0 failed, 2 intentionally skipped (106 total).
+- `npm test`: 104 passed, 0 failed, 2 intentionally skipped (106 total).
+- `npm run test:integration`: 106 passed, 0 failed, 0 skipped.
 - `git diff --check`: passed.
 
 New deterministic tests exercise pinned DNS/TLS options, IPv4/IPv6 non-public

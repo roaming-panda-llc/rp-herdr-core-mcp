@@ -21,6 +21,7 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
   let eventManager;
   if (config.events?.enabled === true) {
     eventManager = sharedEventManager ?? createEventManager(core, config);
+    if (!sharedEventManager) eventManager.restrictOwner(principal);
     server.server.registerCapabilities({ events: {} });
 
     // Start polling after server initialization

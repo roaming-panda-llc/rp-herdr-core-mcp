@@ -151,6 +151,7 @@ export class EventManager {
     this.state.scope = scope;
     this.verificationCache = new Map();
     this.pending = new Map();
+    this.pendingCount = 0;
     this.verifying = new Map();
     this.controllers = new Map();
     this.pollingHosts = [];
@@ -217,6 +218,7 @@ export class EventManager {
     if (!this.getEventDefinition(name)) throw new Error(`Unknown event: ${name}`);
     if (!delivery || delivery.mode !== 'webhook') throw new Error('Only webhook delivery mode is supported');
     validateCallbackUrl(delivery.url);
+    if (typeof delivery.secret !== 'string' || delivery.secret.length > 128 || delivery.url.length > 2048) throw new Error('Invalid delivery');
     validateSecret(delivery.secret);
     const parsedArguments = getEventInputZodSchema(name).safeParse(args);
     if (!parsedArguments.success) throw new Error('Invalid arguments for event');
@@ -227,9 +229,10 @@ export class EventManager {
     if (!this.store) throw new Error('Configure events.stateDirectory before subscribing');
     this.cleanupExpired();
     const id = generateSubscriptionId(owner, delivery.url, name, arguments_);
-    if (this.pending.size >= MAX_SUBSCRIPTIONS) throw new Error('Pending subscription capacity exceeded');
+    if (this.pendingCount >= MAX_SUBSCRIPTIONS) throw new Error('Pending subscription capacity exceeded');
     // Serialize mutations for an identity. Unsubscribe waits for this operation,
     // so it cannot be undone by a late verification response.
+    this.pendingCount++;
     const previous = this.pending.get(id) ?? Promise.resolve();
     const operation = previous.catch(() => {}).then(async () => {
       if (this.shuttingDown) throw new Error('Events are stopping');
@@ -279,7 +282,7 @@ export class EventManager {
     });
     this.pending.set(id, operation);
     try { return await operation; }
-    finally { if (this.pending.get(id) === operation) this.pending.delete(id); }
+    finally { this.pendingCount--; if (this.pending.get(id) === operation) this.pending.delete(id); }
   }
   async handleUnsubscribe(owner, params) {
     const { name, arguments: args = {}, delivery } = params ?? {};
@@ -365,6 +368,7 @@ export class EventManager {
         const heads = new Map();
         for (const item of this.state.outbox) if (!heads.has(item.subscriptionId)) heads.set(item.subscriptionId, item.nextRetryAt);
         const due = Math.min(...heads.values());
+        clearTimeout(this.retryTimer);
         this.retryTimer = setTimeout(() => this.kick(), Math.max(1, due - this.now()));
         this.retryTimer.unref?.();
       }
@@ -380,7 +384,7 @@ export class EventManager {
     while (!this.shuttingDown) {
       // FIFO per subscription, but a delayed destination never blocks others.
       const seen = new Set();
-      const item = this.state.outbox.find(i => { if (seen.has(i.subscriptionId)) return false; seen.add(i.subscriptionId); return i.nextRetryAt <= this.now(); });
+      let item = this.state.outbox.find(i => { if (seen.has(i.subscriptionId)) return false; seen.add(i.subscriptionId); return i.nextRetryAt <= this.now(); });
       if (!item) return;
       const sub = this.active(item.subscriptionId);
       if (!sub) { this.remove(item.subscriptionId); this.persist(); continue; }
@@ -392,6 +396,8 @@ export class EventManager {
       } catch { /* Retry only while the subscription remains authorized. */ }
       finally { if (this.controllers.get(sub.id) === controller) this.controllers.delete(sub.id); }
       if (this.shuttingDown) return;
+      item = this.state.outbox.find(i => i.eventId === item.eventId && i.subscriptionId === sub.id);
+      if (!item) continue;
       const current = this.active(sub.id);
       if (!current) { this.remove(sub.id); this.persist(); continue; }
       if (response?.ok) {

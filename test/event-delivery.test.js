@@ -275,3 +275,36 @@ test('storage failure stops delivery and does not acknowledge subscription activ
   await assert.rejects(manager.handleSubscribe('alice', request()), /storage write failed/);
   assert.equal(manager.shuttingDown, true);
 });
+
+test('in-flight acknowledgement uses current queue after a rolled-back poll transaction', async t => {
+  const { manager } = setup(t);
+  await manager.handleSubscribe('alice', request());
+  manager.deliverEvent('terminal.created', payload());
+  let complete, start;
+  const started = new Promise(resolve => { start = resolve; });
+  manager.transport = async () => { start(); return new Promise(resolve => { complete = resolve; }); };
+  const processing = manager.processOutbox();
+  await started;
+  // A failed poll restores its prior snapshot with fresh object identities.
+  manager.state = structuredClone(manager.state);
+  complete({ ok: true, status: 200 });
+  await processing;
+  assert.equal(manager.outbox.length, 0);
+  assert.equal([...manager.subscriptions.values()][0].cursor, 1);
+});
+
+test('shutdown aborts a pending callback and preserves its durable queue', async t => {
+  const { manager, directory } = setup(t);
+  await manager.handleSubscribe('alice', request());
+  manager.deliverEvent('terminal.created', payload());
+  let start;
+  const started = new Promise(resolve => { start = resolve; });
+  manager.transport = async (_url, { signal }) => new Promise((resolve, reject) => {
+    start(); signal.addEventListener('abort', () => reject(new Error('stopped')), { once: true });
+  });
+  const processing = manager.processOutbox();
+  await started;
+  await manager.stopPolling();
+  await processing;
+  assert.equal(new EventStore(directory).load().outbox.length, 1);
+});
