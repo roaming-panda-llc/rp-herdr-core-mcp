@@ -13,14 +13,14 @@ const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32
 const textResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const clip = (value, length = 512) => typeof value === 'string' ? value.slice(0, length) : null;
 
-export function makeServer(core, config) {
+export function makeServer(core, config, sharedEventManager, principal = 'stdio') {
   const bridgeMayStartCore = core instanceof HostRuntime && [...core.hosts.values()].some(h => h.config.connection.type === 'ssh');
   const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.2.0' });
 
   // Register events capability and handlers if enabled (opt-in, default disabled)
   let eventManager;
   if (config.events?.enabled === true) {
-    eventManager = createEventManager(core, config);
+    eventManager = sharedEventManager ?? createEventManager(core, config);
     server.server.registerCapabilities({ events: {} });
 
     // Start polling after server initialization
@@ -33,13 +33,13 @@ export function makeServer(core, config) {
     // Stop polling on server close
     const originalClose = server.close.bind(server);
     server.close = async () => {
-      await eventManager.stopPolling();
+      if (!sharedEventManager) await eventManager.stopPolling();
       await originalClose();
     };
     
     // Also handle transport close
     server.onclose = async () => {
-      await eventManager.stopPolling();
+      if (!sharedEventManager) await eventManager.stopPolling();
     };
 
     // Define event request schemas with method literals
@@ -49,11 +49,11 @@ export function makeServer(core, config) {
     });
     const EventsSubscribeRequestSchema = RequestSchema.extend({
       method: z.literal('events/subscribe'),
-      params: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url(), secret: z.string() }).optional(), cursor: z.unknown().nullable().optional(), ttlMs: z.number().int().positive().nullable().optional() }).optional()
+      params: z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url().max(2048), secret: z.string().max(128) }).strict(), cursor: z.string().max(128).nullable().optional(), ttlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional() }).strict()
     });
     const EventsUnsubscribeRequestSchema = RequestSchema.extend({
       method: z.literal('events/unsubscribe'),
-      params: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url() }).optional() }).optional()
+      params: z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url().max(2048) }).strict() }).strict()
     });
 
     // events/list - returns the event catalog
@@ -68,12 +68,11 @@ export function makeServer(core, config) {
     server.server.setRequestHandler(
       EventsSubscribeRequestSchema,
       async ({ params }, extra) => {
-        const auth = extra?.requestInfo?.headers?.authorization;
-        const owner = auth ? `bearer:${createHash('sha256').update(auth).digest('hex').slice(0, 16)}` : 'unknown';
+        const owner = principal;
         try {
           return await eventManager.handleSubscribe(owner, params);
         } catch (error) {
-          throw new McpError(ErrorCode.InvalidParams, error.message);
+          throw new McpError(error.code === -32015 ? -32015 : ErrorCode.InvalidParams, error.message, error.data);
         }
       }
     );
@@ -82,12 +81,11 @@ export function makeServer(core, config) {
     server.server.setRequestHandler(
       EventsUnsubscribeRequestSchema,
       async ({ params }, extra) => {
-        const auth = extra?.requestInfo?.headers?.authorization;
-        const owner = auth ? `bearer:${createHash('sha256').update(auth).digest('hex').slice(0, 16)}` : 'unknown';
+        const owner = principal;
         try {
           return await eventManager.handleUnsubscribe(owner, params);
         } catch (error) {
-          throw new McpError(ErrorCode.InvalidParams, error.message);
+          throw new McpError(error.code === -32015 ? -32015 : ErrorCode.InvalidParams, error.message, error.data);
         }
       }
     );
@@ -171,6 +169,11 @@ export function makeHttpApp(core, config, token) {
   const digest = s => createHash('sha256').update(s).digest();
   const expected = digest(`Bearer ${token}`);
   const app = express();
+  const events = config.events?.enabled ? createEventManager(core, config) : undefined;
+  const principal = `bearer:${createHash('sha256').update(`Bearer ${token}`).digest('hex')}`;
+  if (events) events.restrictOwner(principal);
+  app.locals.startEvents = async () => events?.startPolling();
+  app.locals.closeEvents = async () => events?.stopPolling();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -186,7 +189,7 @@ export function makeHttpApp(core, config, token) {
   });
   app.use(express.json({ limit: '64kb', strict: true }));
   app.post('/mcp', async (req, res) => {
-    const server = makeServer(core, config);
+    const server = makeServer(core, config, events, principal);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.once('close', () => { void transport.close(); void server.close(); });
     try { await server.connect(transport); await transport.handleRequest(req, res, req.body); }

@@ -3,11 +3,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { HostRuntime } from './runtime.js';
 import { makeServer, makeHttpApp } from './server.js';
 import { configSchema } from './config.js';
-let core, listener, server;
+let core, listener, server, closeEvents;
 let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
+  await closeEvents?.();
   core?.close();
   listener?.close();
   listener?.closeAllConnections();
@@ -26,6 +27,8 @@ try {
     process.stdin.once('end', () => { void stop(); });
   } else {
     const app = makeHttpApp(core, config, process.env.HERDR_MCP_TOKEN);
+    closeEvents = app.locals.closeEvents;
+    await app.locals.startEvents();
     listener = app.listen(config.port, '127.0.0.1', () => console.error(`herdr-core MCP on loopback port ${config.port}; HTTPS proxy required`));
     listener.requestTimeout = 20000;
     listener.headersTimeout = 10000;

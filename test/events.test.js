@@ -93,13 +93,13 @@ test('events/list returns exact catalog with correct schemas', async t => {
   // Verify terminal.status_changed schema
   const statusChanged = result.events.find(e => e.name === 'terminal.status_changed');
   assert.ok(statusChanged);
-  assert.deepEqual(Object.keys(statusChanged.inputSchema.properties).sort(), ['host', 'terminal'].sort());
+  assert.deepEqual(Object.keys(statusChanged.inputSchema.properties).sort(), ['created_ms', 'host', 'terminal'].sort());
   assert.deepEqual(statusChanged.payloadSchema.required.sort(), ['host', 'new_status', 'previous_status', 'terminal', 'timestamp_ms'].sort());
   
   // Verify terminal.finished schema
   const finished = result.events.find(e => e.name === 'terminal.finished');
   assert.ok(finished);
-  assert.deepEqual(Object.keys(finished.inputSchema.properties).sort(), ['host', 'terminal'].sort());
+  assert.deepEqual(Object.keys(finished.inputSchema.properties).sort(), ['created_ms', 'host', 'terminal'].sort());
   assert.deepEqual(finished.payloadSchema.required.sort(), ['finished_ms', 'host', 'terminal'].sort());
 });
 
@@ -206,4 +206,32 @@ test('config schema accepts events.enabled boolean', () => {
 test('config schema rejects invalid events config', () => {
   assert.throws(() => configSchema.parse({ socketPath: '/tmp/a.sock', events: { enabled: 'yes' } }));
   assert.throws(() => configSchema.parse({ socketPath: '/tmp/a.sock', events: { unknown: true } }));
+});
+test('shared process manager survives individual MCP request server closure', async t => {
+  const { EventManager } = await import('../src/events.js');
+  const core = mockCore('test-core');
+  const config = configSchema.parse({ socketPath: '/tmp/test.sock', events: { enabled: true } });
+  const manager = new EventManager(core, config, {
+    store: { load: () => null, save: () => {} }, autoDispatch: false,
+    transport: async (_url, options) => ({ ok: true, status: 200, json: async () => ({ challenge: JSON.parse(options.body).challenge }) })
+  });
+  t.after(() => manager.stopPolling());
+  const params = { name: 'terminal.created', delivery: { mode: 'webhook', url: 'https://callback.example/hook', secret: validSecret } };
+  async function connect() {
+    const server = makeServer(core, config, manager);
+    const client = new Client({ name: 'test', version: '1' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a); await client.connect(b);
+    return { client, server };
+  }
+  const first = await connect();
+  await first.client.request({ method: 'events/subscribe', params }, ResultSchema);
+  await first.client.close(); await first.server.close();
+  assert.equal(manager.subscriptions.size, 1);
+  assert.equal(manager.shuttingDown, false);
+  const second = await connect();
+  t.after(async () => { await second.client.close(); await second.server.close(); });
+  const { secret, ...delivery } = params.delivery;
+  await second.client.request({ method: 'events/unsubscribe', params: { ...params, delivery } }, ResultSchema);
+  assert.equal(manager.subscriptions.size, 0);
 });

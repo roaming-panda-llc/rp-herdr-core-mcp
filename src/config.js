@@ -35,7 +35,8 @@ const host = z.object({
   if (Object.keys(v.profiles).length && v.accessMode !== 'trusted-core') c.addIssue({ code: 'custom', message: 'Creation profiles require explicit trusted-core access' });
 });
 const events = z.object({
-  enabled: z.boolean().default(false)
+  enabled: z.boolean().default(false),
+  stateDirectory: absolutePath.optional()
 }).strict();
 
 export const configSchema = z.object({

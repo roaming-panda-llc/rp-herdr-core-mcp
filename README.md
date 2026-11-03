@@ -154,3 +154,8 @@ See [MULTIHOST.md](MULTIHOST.md) for explicit host IDs/core pins, strict SSH bri
 restricted versus trusted-core policy, configured Pi/Claude profiles, model/provider
 argument variants, exact project directories, creation verification and uncertainty.
 No actual host is configured or enabled by installing this source.
+
+## Optional MCP Events
+
+See [EVENTS.md](EVENTS.md) for opt-in discovery, durable subscription storage,
+webhook delivery, replay, configuration requirements and polling limits.

@@ -33,3 +33,35 @@ or actual agent-readiness proof. Existing sessions were not touched. Profile fla
 project directory/symlink targets, remote session/core identity and approved access
 must be verified separately before activation. The builder did not configure any
 user host or grant trusted-core access.
+
+## MCP Events repair — 2026-11-03
+
+Independent cloud checkout started from remote branch `feature/mcp-events-v2`
+at `95f1a274fb40ec14e20725be12c19c66e7b2931f`, Node v24.19.0/npm 11.9.0.
+The original checkout's `npm test` passed **79 tests, 0 failed, 2 skipped**
+(81 total), including the ordinary stdio startup/close test. The previously
+reported stdio failure did not reproduce here; its cause is not established.
+
+The first install attempt failed because the default `/home/agent/.npm` cache
+was not writable. `npm ci --ignore-scripts --cache /tmp/herdr-npm-cache` succeeded
+without dependency or lockfile changes.
+
+After callback transport repair (`1d552a8`), `npm run test:integration` passed
+86/86 tests, zero failures/skips. After durable manager/replay repairs:
+
+- `npm run check`: 102 passed, 0 failed, 2 intentionally skipped (104 total).
+- `npm run test:integration`: 104 passed, 0 failed, 0 skipped.
+- `git diff --check`: passed.
+
+New deterministic tests exercise pinned DNS/TLS options, IPv4/IPv6 non-public
+ranges, rebinding, redirects, response bounds, timeout, challenge/signatures,
+rotation, principal isolation, cancellation including in-flight requests,
+encrypted persistence and tamper rejection, restart/replay, bounded queue/history,
+retention truncation, disk failure, shared manager lifetime, host/address reuse,
+and finish/disappear deduplication. The check script now syntax-checks all three
+new event modules.
+
+No deployment, live callback, live core, external agent creation, credential
+change, main merge or ChatGPT end-to-end callback test was performed. The storage
+and observation limitations in EVENTS.md apply; these tests do not establish
+production connectivity or recover events never observed by the adapter.
