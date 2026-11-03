@@ -44,6 +44,11 @@ See [AGENT-HANDOFF.md](AGENT-HANDOFF.md) for migration and verification.
   stable request ID, startup verification and no adapter-added initial prompt.
 - **list_sessions**: local terminal records, optionally finished, paginated at 25
   by default (maximum 100). Non-atomic snapshot; no reconstructed chat history.
+  `needs_you` is true for raw `blocked`/`error`, false for `working`/`idle`/`done`,
+  and null for missing or unrecognized status. It describes the terminal itself,
+  not desktop placement, parent/sub-agent grouping, or permission to send.
+  This mapping is verified against Herdr desktop v0.1.12; see
+  [attention semantics](ATTENTION.md). Existing raw status and write guards remain unchanged.
 - **read_output**: current screen only, last 12,000 characters by default (maximum
   32,768), with truncation/completeness flags. Always `lines: 0`: hc history stitching
   can inject scrolling input, so it is deliberately not exposed.

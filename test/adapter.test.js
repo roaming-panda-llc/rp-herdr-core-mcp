@@ -539,3 +539,19 @@ for (const method of ['terminal.send', 'terminal.run']) {
     assert.equal(f.calls.filter(c => c.method === method).length, 1);
   });
 }
+
+// Exercise the MCP wire result, retaining raw status and read-only core calls.
+test('list exposes conservative per-terminal Needs You without changing raw status or guards', async t => {
+  const states = ['blocked', 'error', 'working', 'idle', 'done', null, 'future-state'];
+  const records = states.map((state, i) => ({ address: `t${i + 1}`, state: 'live',
+    status: state === null ? null : { state },
+    labels: { secret: 'must-not-leak' }, turn: 8, parent: 't9' }));
+  const f = await fixture(t, (m, reply) => reply({ terminals: records }));
+  const client = await clientFor(t, f.core);
+  const result = unpack(await client.callTool({ name: 'list_sessions', arguments: {} }));
+  assert.deepEqual(result.sessions.map(s => s.needs_you), [true, true, false, false, false, null, null]);
+  assert.deepEqual(result.sessions.map(s => s.status?.state ?? null), states);
+  assert.ok(result.sessions.every(s => s.send_enabled === false));
+  assert.ok(!JSON.stringify(result).includes('must-not-leak'));
+  assert.deepEqual(f.calls.map(c => c.method), ['hello', 'terminal.list']);
+});

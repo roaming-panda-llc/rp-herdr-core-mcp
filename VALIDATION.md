@@ -63,3 +63,22 @@ main merge, or credential/access/security change was run. The parent's read-only
 Air findings are external evidence, not tests performed by this checkout. Warnings
 for untested versions cannot guarantee their mutation behavior. No Events or
 escape-only-control branch changes are part of this isolated work.
+
+## Needs You visibility — 2026-11-03
+
+Branch `fix/needs-you-visibility`, based on `e2d7eec`. Node v26.3.0,
+npm 11.16.0; locked dependencies installed with lifecycle scripts disabled.
+
+- `npm run check`: 108 passed, 0 failed, 2 intentional transport skips.
+- `npm run test:integration`: 110 passed, 0 failed, 0 skipped.
+- `git diff --check`: passed.
+- Added MCP response regression for blocked/error, working/idle/done, missing
+  and future states, raw-state preservation, label non-disclosure, disabled
+  send permissions, and absence of mutation calls.
+- Read-only installed desktop 0.1.12 inspection (`status`, `ls`, `shot`) verified
+  four placed blocked agents and a matching Needs You count. The owning cores'
+  MCP lists reported raw error for each. No session inputs, closures, focus
+  changes, label writes, service changes, merge, or deployment were performed.
+
+This is per-terminal attention, not an exact desktop sidebar reconstruction.
+Pinned source references and scope limits are in ATTENTION.md.
