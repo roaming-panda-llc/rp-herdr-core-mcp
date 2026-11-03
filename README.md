@@ -1,6 +1,6 @@
 # rp-herdr-core-mcp
 
-A small single-user MCP adapter for **herdr-core 0.1.15/0.1.16**, using the official MCP
+A small single-user MCP adapter for **herdr-core (tested: 0.1.15, 0.1.16, 0.1.17)**, using the official MCP
 SDK. Version **0.2.0**. MIT licensed. macOS/Linux; no Windows pipe support.
 
 Five tools expose configured cores: `list_hosts`, `list_sessions`, `read_output`,
@@ -54,7 +54,12 @@ See [AGENT-HANDOFF.md](AGENT-HANDOFF.md) for migration and verification.
 Core connections are capped at eight per host (at most 16 hosts), received bytes at 1 MiB per call, and timeout
 at 15 seconds by default (configurable 100–60,000 ms). Large upstream lists can
 exceed the byte limit before pagination; this fails explicitly. The adapter checks
-JSON-RPC IDs and reply shape, generation 1, plain framing, and versions exactly 0.1.15 or 0.1.16.
+JSON-RPC IDs and reply shape, generation 1, plain framing, required methods, and
+configured core identity. Versions 0.1.15, 0.1.16 and 0.1.17 are reviewed. Other
+well-formed older/newer versions warn on stderr and proceed after those checks;
+version alone is not a rejection. Mutation errors on untested versions remain
+unknown outcomes, including status_mismatch: inspect before retrying. Warnings
+are emitted once per untested version per CoreClient (bounded to 16 versions).
 Shutdown closes adapter connections only; existing terminals continue.
 
 ## Approving writes and send modes
@@ -135,7 +140,9 @@ implied by passing mocked tests.
 
 Verified core contract: tag `v0.1.15`, commit
 `9e934dff8513710d3c5111fe28bc5b23564805db`, plus reviewed tag `v0.1.16`
-(`e07c2a1bedd62cf4787ee026ee23ee79c7d95491`):
+(`e07c2a1bedd62cf4787ee026ee23ee79c7d95491`) and `v0.1.17`
+(`ce87721557176f6cddaac1c7aefbf76929923263`). See
+[the 0.1.17 compatibility review](CORE-COMPATIBILITY.md) for semantic changes and risks:
 
 - [Transport/API](https://github.com/herdrdev/herdr-core/blob/v0.1.15/schema/README.md)
 - [OpenRPC schema](https://github.com/herdrdev/herdr-core/blob/v0.1.15/schema/hc.openrpc.json)
@@ -146,7 +153,7 @@ Verified core contract: tag `v0.1.15`, commit
 - [Official MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 
 The adapter does not depend on oldherdrTUI. Review and test source/schema changes
-before relaxing the pinned core version guard.
+before adding another version to the reviewed set. Untested versions warn by default.
 
 ## Multiple hosts and creation
 

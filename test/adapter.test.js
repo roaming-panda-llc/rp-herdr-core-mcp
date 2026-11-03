@@ -1,4 +1,7 @@
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { createSession } from '../src/create.js';
+const hc017 = JSON.parse(readFileSync(new URL('./fixtures/core-0.1.17.json', import.meta.url), 'utf8'));
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import http from 'node:http';
@@ -77,7 +80,7 @@ test('core uses pinned hello and correct params, handles split UTF-8 lines', asy
   assert.deepEqual(f.calls.map(x => x.method), ['hello', 'terminal.read']);
   assert.equal(f.core.sockets.size, 0);
 });
-for (const [name, override] of [['version', { version: '0.1.17' }], ['generation', { generation: 2 }], ['framing', { framed: true }], ['methods', { methods: [] }], ['malformed methods', { methods: 7 }]]) {
+for (const [name, override] of [['malformed version', { version: 17 }], ['generation', { generation: 2 }], ['framing', { framed: true }], ['methods', { methods: [] }], ['malformed methods', { methods: 7 }]]) {
   test(`reject incompatible ${name} before operation`, async t => {
     const f = await fixture(t, () => assert.fail('Operation must not run'), override);
     await assert.rejects(f.core.call('terminal.list', {}), /compatible/);
@@ -389,3 +392,150 @@ test('terminal.run timeout reports unknown creation and never replays', async t 
   });
   assert.equal(f.calls.filter(c => c.method === 'terminal.run').length, 1);
 });
+
+for (const [name, override] of [
+  ['generation', { generation: 2 }], ['framing', { framed: true }],
+  ['missing method', { methods: ['hello'] }], ['malformed method', { methods: ['terminal.list', 7] }],
+  ['identity', { core: { id: 'other-core' } }],
+  ['malformed version', { version: null }]
+]) {
+  test(`hc 0.1.17 retains ${name} rejection before dispatch`, async t => {
+    const f = await fixture(t, () => assert.fail('Operation must not run'), { ...hc017.hello, ...override });
+    await assert.rejects(f.core.call('terminal.list', {}, 'test-core'), /compatible|identity mismatch/);
+    assert.deepEqual(f.calls.map(c => c.method), ['hello']);
+  });
+}
+
+test('hc 0.1.17 lists and reads through MCP without attaching or scrolling', async t => {
+  const f = await fixture(t, (m, reply) => {
+    if (m.method === 'terminal.list') return reply({ terminals: [hc017.terminal], hidden_finished: 0, machines: [] });
+    assert.equal(m.method, 'terminal.read');
+    assert.deepEqual(m.params, { terminal: 't1', lines: 0 });
+    reply(hc017.read);
+  }, hc017.hello);
+  const client = await clientFor(t, f.core, { coreId: 'test-core', sendAllowlist: [] });
+  assert.equal(unpack(await client.callTool({ name: 'list_sessions', arguments: {} })).sessions[0].created_ms, 123);
+  assert.equal(unpack(await client.callTool({ name: 'read_output', arguments: { terminal: 't1' } })).text, hc017.read.text);
+  for (const call of f.calls.filter(c => c.method === 'hello')) assert.deepEqual(call.params, { generation: 1, framed: false });
+  assert.ok(f.calls.every(c => ['hello', 'terminal.list', 'terminal.read'].includes(c.method)));
+});
+
+for (const state of ['idle', 'done', 'working', 'blocked', 'error']) {
+  test(`hc 0.1.17 normal send preserves ${state} policy`, async t => {
+    const f = await fixture(t, (m, reply) => reply(m.method === 'terminal.list'
+      ? { terminals: [{ ...hc017.terminal, status: { state } }], hidden_finished: 0, machines: [] } : hc017.send), hc017.hello);
+    const client = await clientFor(t, f.core, { coreId: 'test-core', sendAllowlist: [{ address: 't1', created_ms: 123 }], sendMode: 'normal' });
+    const result = await client.callTool({ name: 'send_prompt', arguments: { terminal: 't1', prompt: 'synthetic test' } });
+    const sends = f.calls.filter(c => c.method === 'terminal.send');
+    if (['idle', 'done'].includes(state)) {
+      assert.equal(result.isError, undefined); assert.equal(sends.length, 1);
+      assert.equal(sends[0].params.force, false); assert.equal(sends[0].params.wait, false);
+      assert.equal(sends[0].params.if, state === 'idle' ? 'idle' : undefined);
+      assert.equal(unpack(result).task_completed, false);
+    } else { assert.equal(result.isError, true); assert.equal(sends.length, 0); }
+  });
+}
+
+for (const [code, kind, delivery] of [
+  [-32000, 'status_mismatch', 'not_sent'], [-32001, 'status_mismatch', 'unknown'],
+  [-32000, 'unavailable', 'unknown'], [-32603, 'internal', 'unknown'], [-32000, 'blocked', 'unknown']
+]) {
+  test(`hc 0.1.17 send ${code}/${kind} retains ${delivery} outcome without retry`, async t => {
+    const f = await fixture(t, (m, _reply, socket) => socket.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code, message: 'synthetic failure', data: { kind } } }) + '\n'), hc017.hello);
+    await assert.rejects(f.core.call('terminal.send', { terminal: 't1', text: 'test', if: 'idle', force: false, wait: false }, 'test-core'), error => error.delivery === delivery);
+    assert.equal(f.calls.filter(c => c.method === 'terminal.send').length, 1);
+  });
+}
+
+function creationHost(core) {
+  return { id: 'local', core, ledger: new Map(), config: { coreId: 'test-core', accessMode: 'trusted-core', profiles: {
+    coding: { executable: '/opt/bin/pi', args: ['--no-daemon'], variants: {}, projects: { demo: '/srv/demo' } }
+  } } };
+}
+const creationInput = { profile: 'coding', project: 'demo', request_id: 'compat-017-creation' };
+
+test('hc 0.1.17 flattened run result is verified by get and deduplicated without replay', async t => {
+  let record;
+  const f = await fixture(t, (m, reply) => {
+    if (m.method === 'terminal.list') return reply({ terminals: record ? [record] : [], hidden_finished: 0, machines: [] });
+    if (m.method === 'terminal.run') {
+      assert.deepEqual(m.params.argv, ['/opt/bin/pi', '--no-daemon']);
+      assert.equal(m.params.cwd, '/srv/demo');
+      for (const key of ['wait', 'keep', 'rm']) assert.equal(m.params[key], false);
+      assert.equal(m.params.no_parent, true); assert.equal(m.params.no_notify, true);
+      record = { ...hc017.terminal, argv: m.params.argv, labels: m.params.labels };
+      return reply(record);
+    }
+    assert.equal(m.method, 'terminal.get'); reply(record);
+  }, hc017.hello);
+  const host = creationHost(f.core);
+  const first = await createSession(host, creationInput);
+  assert.equal(first.verified, true); assert.equal(first.created_now, true);
+  assert.equal((await createSession(host, creationInput)).cached_receipt, true);
+  const reconciled = await createSession(creationHost(f.core), creationInput);
+  assert.equal(reconciled.created_now, false); assert.equal(reconciled.verified, true);
+  assert.equal(f.calls.filter(c => c.method === 'terminal.run').length, 1);
+});
+
+for (const failure of ['flush-timeout', 'writer-stopped', 'connection-close', 'timeout']) {
+  test(`hc 0.1.17 creation ${failure} stays unknown and cached attempts cannot recreate`, async t => {
+    const f = await fixture(t, (m, reply, socket) => {
+      if (m.method === 'terminal.list') return reply({ terminals: [], hidden_finished: 0, machines: [] });
+      assert.equal(m.method, 'terminal.run');
+      if (failure === 'timeout') return;
+      if (failure === 'connection-close') return socket.destroy();
+      socket.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: {
+        code: failure === 'flush-timeout' ? -32000 : -32603, message: 'synthetic persistence failure',
+        data: { kind: failure === 'flush-timeout' ? 'unavailable' : 'internal' }
+      } }) + '\n');
+    }, hc017.hello);
+    const host = creationHost(f.core);
+    for (let i = 0; i < 2; i++) await assert.rejects(createSession(host, creationInput), e => e.creation === 'unknown' && /reconcile request_id/.test(e.message));
+    assert.equal(f.calls.filter(c => c.method === 'terminal.run').length, 1);
+  });
+}
+
+for (const version of ['0.1.14', '0.1.18', '0.2.0', '0.1.17-custom']) {
+  test(`untested hc ${version} warns once and allows validated list/read`, async t => {
+    const f = await fixture(t, (m, reply) => reply(m.method === 'terminal.list' ? { terminals: [], hidden_finished: 0, machines: [] } : hc017.read), { ...hc017.hello, version });
+    const warnings = []; f.core.warn = message => warnings.push(message);
+    await f.core.call('terminal.list', {}, 'test-core');
+    assert.equal((await f.core.call('terminal.read', { terminal: 't1', lines: 0 }, 'test-core')).text, hc017.read.text);
+    assert.equal(warnings.length, 1); assert.match(warnings[0], /untested/); assert.ok(warnings[0].includes(version));
+  });
+  test(`untested hc ${version} status rejection cannot claim known non-delivery`, async t => {
+    const f = await fixture(t, (m, _reply, socket) => socket.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32000, message: 'not idle', data: { kind: 'status_mismatch' } } }) + '\n'), { ...hc017.hello, version });
+    f.core.warn = () => {};
+    await assert.rejects(f.core.call('terminal.send', { terminal: 't1', text: 'test', if: 'idle', force: false }, 'test-core'), e => e.delivery === 'unknown' && /UNKNOWN/.test(e.message));
+    assert.equal(f.calls.filter(c => c.method === 'terminal.send').length, 1);
+  });
+}
+
+for (const override of [{ generation: 2 }, { framed: true }, { methods: [] }, { core: { id: 'wrong' } }]) {
+  test(`untested version never relaxes protocol/identity guard ${JSON.stringify(override)}`, async t => {
+    const f = await fixture(t, () => assert.fail('No operation allowed'), { ...hc017.hello, version: '0.2.0', ...override });
+    const warnings = []; f.core.warn = message => warnings.push(message);
+    await assert.rejects(f.core.call('terminal.send', {}, 'test-core'), /compatible|identity/);
+    assert.deepEqual(f.calls.map(c => c.method), ['hello']);
+    assert.equal(warnings.length, 0);
+  });
+}
+
+test('all reviewed versions are silent and untested successful send/create remain usable', async t => {
+  for (const version of ['0.1.15', '0.1.16', '0.1.17', '0.1.18']) {
+    const f = await fixture(t, (m, reply) => reply(m.method === 'terminal.run' ? hc017.terminal : hc017.send), { ...hc017.hello, version });
+    const warnings = []; f.core.warn = message => warnings.push(message);
+    assert.equal((await f.core.call('terminal.send', { terminal: 't1', text: 'synthetic', force: false, wait: false }, 'test-core')).turn, 9);
+    assert.equal((await f.core.call('terminal.run', { argv: ['/opt/bin/pi'], wait: false }, 'test-core')).address, 't1');
+    assert.equal(warnings.length, version === '0.1.18' ? 1 : 0);
+  }
+});
+
+for (const method of ['terminal.send', 'terminal.run']) {
+  test(`untested version ${method} persistence failure is unknown and never replayed`, async t => {
+    const f = await fixture(t, (m, _reply, socket) => socket.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32000, message: 'synthetic flush timeout', data: { kind: 'unavailable' } } }) + '\n'), { ...hc017.hello, version: '0.2.0' });
+    f.core.warn = () => {};
+    await assert.rejects(f.core.call(method, {}, 'test-core'), e => (method === 'terminal.send' ? e.delivery : e.creation) === 'unknown');
+    assert.equal(f.calls.filter(c => c.method === method).length, 1);
+  });
+}

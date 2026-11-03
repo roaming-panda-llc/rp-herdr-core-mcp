@@ -1,0 +1,85 @@
+{
+  "source": {
+    "tag": "v0.1.17",
+    "commit": "ce87721557176f6cddaac1c7aefbf76929923263",
+    "note": "Synthetic responses; method names taken from the tagged OpenRPC schema. No live host data."
+  },
+  "hello": {
+    "version": "0.1.17",
+    "generation": 1,
+    "framed": false,
+    "core": {
+      "id": "test-core"
+    },
+    "features": [
+      "framed",
+      "attach",
+      "events",
+      "status",
+      "shell",
+      "resize_notifications"
+    ],
+    "methods": [
+      "hello",
+      "server.status",
+      "server.stop",
+      "server.restart",
+      "terminal.run",
+      "templates.list",
+      "terminal.list",
+      "terminal.get",
+      "terminal.kill",
+      "terminal.rm",
+      "terminal.keep",
+      "terminal.label",
+      "terminal.read",
+      "terminal.attach",
+      "terminal.send",
+      "terminal.wait",
+      "terminal.keys",
+      "terminal.interrupt",
+      "terminal.put",
+      "machine.exec",
+      "file.read",
+      "file.write",
+      "file.edit",
+      "doc.get",
+      "doc.set",
+      "events.subscribe",
+      "machine.add",
+      "machine.list",
+      "machine.connect",
+      "machine.rename",
+      "machine.rm",
+      "rpc.discover"
+    ]
+  },
+  "terminal": {
+    "address": "t1",
+    "labels": {},
+    "argv": [
+      "/opt/bin/pi"
+    ],
+    "cwd": "/srv/demo",
+    "state": "live",
+    "created_ms": 123,
+    "screen": "exact",
+    "cols": 80,
+    "rows": 24,
+    "pid": 42,
+    "reason": null,
+    "status": {
+      "state": "idle"
+    }
+  },
+  "read": {
+    "text": "synthetic screen \u00e9",
+    "complete": true,
+    "how": "screen"
+  },
+  "send": {
+    "turn": 9,
+    "status": "idle",
+    "started": true
+  }
+}

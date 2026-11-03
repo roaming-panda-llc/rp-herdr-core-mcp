@@ -33,3 +33,33 @@ or actual agent-readiness proof. Existing sessions were not touched. Profile fla
 project directory/symlink targets, remote session/core identity and approved access
 must be verified separately before activation. The builder did not configure any
 user host or grant trusted-core access.
+
+## Core 0.1.17 and advisory version compatibility — 2026-11-03
+
+Isolated branch `feature/core-0.1.17-compat` starts from main
+`a511edb5a11b311385b1b344f640fce4d115168d`. Node v24.19.0, npm 11.9.0.
+Dependencies installed with `npm ci --ignore-scripts --cache /tmp/herdr-npm-cache`;
+no dependency or lockfile changes. Baseline `npm run test:integration`: **64 passed,
+0 failed, 0 skipped**.
+
+Final code checks:
+
+- `npm run check`: **99 passed, 0 failed, 2 intentional skips** (101 tests), plus syntax checks.
+- `npm test`: **99 passed, 0 failed, 2 intentional skips** (101 tests).
+- `npm run test:integration`: **101 passed, 0 failed, 0 skipped**.
+- `git diff --check`: passed.
+
+New protocol tests cover the 0.1.17 fixture, unchanged hard guards, plain hello,
+MCP read/list and no-scrolling reads, guarded idle/normal done sends, blocked/error/
+working rejection, exact known status rejection, unknown post-dispatch persistence
+errors, timeout/connection loss, flattened creation response, get verification,
+request-id deduplication and restart reconciliation. Untested older/newer/build
+versions warn once and allow validated operations; their status/persistence errors
+remain unknown outcomes. Reviewed versions produce no advisory warning.
+
+Official source semantic review and pinned links are in CORE-COMPATIBILITY.md.
+No core Rust build/test, Air connection, live mutation, service change, deployment,
+main merge, or credential/access/security change was run. The parent's read-only
+Air findings are external evidence, not tests performed by this checkout. Warnings
+for untested versions cannot guarantee their mutation behavior. No Events or
+escape-only-control branch changes are part of this isolated work.
