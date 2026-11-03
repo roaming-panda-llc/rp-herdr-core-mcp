@@ -12,6 +12,7 @@ import { createEventManager, eventsCatalog } from './events.js';
 const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32);
 const textResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const clip = (value, length = 512) => typeof value === 'string' ? value.slice(0, length) : null;
+
 export function makeServer(core, config) {
   const bridgeMayStartCore = core instanceof HostRuntime && [...core.hosts.values()].some(h => h.config.connection.type === 'ssh');
   const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.2.0' });
@@ -20,8 +21,26 @@ export function makeServer(core, config) {
   let eventManager;
   if (config.events?.enabled === true) {
     eventManager = createEventManager(core, config);
-    eventManager.startPolling();
     server.server.registerCapabilities({ events: {} });
+
+    // Start polling after server initialization
+    const originalConnect = server.connect.bind(server);
+    server.connect = async (transport) => {
+      await originalConnect(transport);
+      await eventManager.startPolling();
+    };
+
+    // Stop polling on server close
+    const originalClose = server.close.bind(server);
+    server.close = async () => {
+      await eventManager.stopPolling();
+      await originalClose();
+    };
+    
+    // Also handle transport close
+    server.onclose = async () => {
+      await eventManager.stopPolling();
+    };
 
     // Define event request schemas with method literals
     const EventsListRequestSchema = RequestSchema.extend({
@@ -52,7 +71,9 @@ export function makeServer(core, config) {
         const auth = extra?.requestInfo?.headers?.authorization;
         const owner = auth ? `bearer:${createHash('sha256').update(auth).digest('hex').slice(0, 16)}` : 'unknown';
         try {
-          return await eventManager.handleSubscribe(owner, params);
+          // In test environment, allow private IPs for localhost callbacks
+          const allowPrivateForTesting = process.env.NODE_ENV === 'test';
+          return await eventManager.handleSubscribe(owner, params, allowPrivateForTesting);
         } catch (error) {
           throw new McpError(ErrorCode.InvalidParams, error.message);
         }
@@ -144,6 +165,7 @@ export function makeServer(core, config) {
   }, wrap(async (args, extra) => createSession(resolveHost(core, config, args.host), args, extra.signal, eventManager)));
   return server;
 }
+
 export function makeHttpApp(core, config, token) {
   if (typeof token !== 'string' || Buffer.byteLength(token) < 32 || /replace|example|changeme/i.test(token)) throw new Error('HTTP requires a real HERDR_MCP_TOKEN of at least 32 bytes');
   const origin = new URL(config.publicOrigin);

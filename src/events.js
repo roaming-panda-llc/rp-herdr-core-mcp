@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Webhook } from 'standardwebhooks';
 import { z } from 'zod';
+import dns from 'node:dns/promises';
 
 const eventsCatalog = [
   {
@@ -105,6 +106,10 @@ const SUBSCRIPTION_TTL_MIN_MS = 60 * 1000;
 const VERIFICATION_CACHE_TTL_MS = 5 * 60 * 1000;
 const WEBHOOK_TIMEOUT_MS = 10000;
 const MAX_PAYLOAD_BYTES = 256 * 1024;
+const POLL_INTERVAL_MS = 5000;
+const MAX_RETRY_ATTEMPTS = 5;
+const INITIAL_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 300000;
 
 function generateSubscriptionId(owner, url, eventName, arguments_) {
   const canonicalArgs = JSON.stringify(arguments_, Object.keys(arguments_).sort());
@@ -120,18 +125,92 @@ function generateChallenge() {
   return randomBytes(32).toString('base64url');
 }
 
-function validateCallbackUrl(url) {
+function makeTerminalKey(hostId, terminalAddress) {
+  return `${hostId}|${terminalAddress}`;
+}
+
+function isPrivateOrLoopbackIp(ip) {
+  // IPv4
+  if (ip.includes('.')) {
+    const parts = ip.split('.').map(Number);
+    // 127.0.0.0/8 - loopback
+    if (parts[0] === 127) return true;
+    // 10.0.0.0/8 - private
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12 - private
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16 - private
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // 169.254.0.0/16 - link-local
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    // 0.0.0.0/8 - reserved
+    if (parts[0] === 0) return true;
+    // 224.0.0.0/4 - multicast
+    if (parts[0] >= 224 && parts[0] <= 239) return true;
+    // 240.0.0.0/4 - reserved
+    if (parts[0] >= 240) return true;
+    return false;
+  }
+  // IPv6
+  if (ip.includes(':')) {
+    const lower = ip.toLowerCase();
+    // ::1/128 - loopback
+    if (lower === '::1') return true;
+    // ::/128 - unspecified
+    if (lower === '::') return true;
+    // fe80::/10 - link-local
+    if (lower.startsWith('fe80:')) return true;
+    // fc00::/7 - unique local (private)
+    const firstHextet = parseInt(lower.split(':')[0], 16);
+    if (!isNaN(firstHextet) && (firstHextet & 0xfe00) === 0xfc00) return true;
+    // ff00::/8 - multicast
+    if (lower.startsWith('ff')) return true;
+    // 2001:db8::/32 - documentation
+    if (lower.startsWith('2001:db8:')) return true;
+    return false;
+  }
+  return false;
+}
+
+async function resolveAndValidateHostname(hostname) {
+  try {
+    const results = await dns.lookup(hostname, { all: true, family: 0 });
+    for (const { address, family } of results) {
+      if (isPrivateOrLoopbackIp(address)) {
+        return { safe: false, reason: `resolved to ${family === 6 ? 'IPv6' : 'IPv4'} ${address} (private/loopback/link-local)` };
+      }
+    }
+    return { safe: true, addresses: results.map(r => r.address) };
+  } catch (error) {
+    return { safe: false, reason: `DNS resolution failed: ${error.message}` };
+  }
+}
+
+async function validateCallbackUrl(url, allowPrivateForTesting = false) {
   const parsed = new URL(url);
   if (parsed.protocol !== 'https:') {
     throw new Error('Callback URL must use HTTPS');
   }
   const hostname = parsed.hostname;
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0') {
+  
+  // Quick hostname checks before DNS resolution
+  if (hostname === 'localhost' || hostname === 'localhost.localdomain') {
     throw new Error('Callback URL must not target localhost');
   }
-  if (/^10\./.test(hostname) || /^192\.168\./.test(hostname) || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) || /^169\.254\./.test(hostname)) {
-    throw new Error('Callback URL must not target private IP ranges');
+  
+  if (!allowPrivateForTesting) {
+    // Resolve and validate all IPs
+    const validation = await resolveAndValidateHostname(hostname);
+    if (!validation.safe) {
+      throw new Error(`Callback URL validation failed: ${validation.reason}`);
+    }
+  } else {
+    // Testing mode - still check literal IPs and localhost
+    if (isPrivateOrLoopbackIp(hostname)) {
+      throw new Error('Callback URL must not target private/loopback/link-local addresses');
+    }
   }
+  
   return parsed;
 }
 
@@ -170,41 +249,68 @@ export class EventManager {
     this.config = config;
     this.subscriptions = new Map();
     this.verificationCache = new Map();
-    this.terminalStates = new Map(); // terminal address -> { host, status, state, created_ms, pid, reason }
+    this.terminalStates = new Map(); // host|terminalAddress -> { host, status, state, created_ms, pid, reason, createdAt }
     this.pollInterval = null;
-    this.pollingHosts = new Set();
+    this.pollingHosts = [];
+    this.isPolling = false;
+    this.pollPromise = null;
+    this.outbox = []; // array of { subscription, eventName, payload, attempts, nextRetryAt }
+    this.outboxProcessing = false;
+    this.shuttingDown = false;
   }
 
-  startPolling() {
-    if (this.pollInterval) return;
+  async startPolling() {
+    if (this.isPolling) return;
     
     // Determine which hosts to poll
-    this.pollingHosts.clear();
+    this.pollingHosts = [];
     if (this.core && typeof this.core.hosts === 'object' && this.core.hosts instanceof Map) {
       // HostRuntime with multiple hosts
       for (const [hostId, host] of this.core.hosts) {
         if (host.config.coreId) {
-          this.pollingHosts.add({ hostId, coreId: host.config.coreId, core: host.core });
+          this.pollingHosts.push({ hostId, coreId: host.config.coreId, core: host.core });
         }
       }
     } else if (this.core && this.config.coreId) {
       // Single core (legacy)
-      this.pollingHosts.add({ hostId: 'local', coreId: this.config.coreId, core: this.core });
+      this.pollingHosts.push({ hostId: 'local', coreId: this.config.coreId, core: this.core });
     }
     
-    // Initial state capture
-    this.captureInitialState();
+    if (this.pollingHosts.length === 0) {
+      return;
+    }
     
-    // Start polling every 5 seconds
-    this.pollInterval = setInterval(() => this.pollTerminals(), 5000);
-    this.pollInterval.unref(); // Don't prevent process exit
+    this.isPolling = true;
+    this.shuttingDown = false;
+    
+    // Initial state capture - await completion
+    await this.captureInitialState();
+    
+    // Start polling
+    this.pollPromise = this.pollLoop();
   }
 
-  stopPolling() {
+  async stopPolling() {
+    this.shuttingDown = true;
+    this.isPolling = false;
+    
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
+    
+    // Wait for any in-flight poll to complete
+    if (this.pollPromise) {
+      try {
+        await this.pollPromise;
+      } catch (e) {
+        // Ignore errors during shutdown
+      }
+      this.pollPromise = null;
+    }
+    
+    // Process remaining outbox with bounded retries
+    await this.drainOutbox();
   }
 
   async captureInitialState() {
@@ -214,13 +320,15 @@ export class EventManager {
         if (Array.isArray(result?.terminals)) {
           for (const terminal of result.terminals) {
             if (!terminal.address) continue;
-            this.terminalStates.set(terminal.address, {
+            const key = makeTerminalKey(hostInfo.hostId, terminal.address);
+            this.terminalStates.set(key, {
               host: hostInfo.hostId,
               status: terminal.status?.state ?? null,
               state: terminal.state ?? null,
               created_ms: terminal.created_ms ?? null,
               pid: terminal.pid ?? null,
-              reason: terminal.reason ?? null
+              reason: terminal.reason ?? null,
+              createdAt: Date.now()
             });
           }
         }
@@ -230,8 +338,31 @@ export class EventManager {
     }
   }
 
+  async pollLoop() {
+    while (this.isPolling && !this.shuttingDown) {
+      const startTime = Date.now();
+      
+      try {
+        await this.pollTerminals();
+      } catch (error) {
+        console.error('Poll cycle error:', error.message);
+      }
+      
+      if (this.shuttingDown) break;
+      
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(0, POLL_INTERVAL_MS - elapsed);
+      
+      if (delay > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
   async pollTerminals() {
     for (const hostInfo of this.pollingHosts) {
+      if (this.shuttingDown) break;
+      
       try {
         const result = await hostInfo.core.call('terminal.list', { all: true }, hostInfo.coreId);
         if (!Array.isArray(result?.terminals)) continue;
@@ -240,9 +371,10 @@ export class EventManager {
         
         for (const terminal of result.terminals) {
           if (!terminal.address) continue;
-          currentTerminals.add(terminal.address);
+          const key = makeTerminalKey(hostInfo.hostId, terminal.address);
+          currentTerminals.add(key);
           
-          const previous = this.terminalStates.get(terminal.address);
+          const previous = this.terminalStates.get(key);
           const currentStatus = terminal.status?.state ?? null;
           const currentState = terminal.state ?? null;
           
@@ -259,13 +391,14 @@ export class EventManager {
               });
             }
             // Track all terminals for status changes
-            this.terminalStates.set(terminal.address, {
+            this.terminalStates.set(key, {
               host: hostInfo.hostId,
               status: currentStatus,
               state: currentState,
               created_ms: terminal.created_ms ?? null,
               pid: terminal.pid ?? null,
-              reason: terminal.reason ?? null
+              reason: terminal.reason ?? null,
+              createdAt: Date.now()
             });
           } else {
             // Check for status change
@@ -287,37 +420,38 @@ export class EventManager {
               await this.deliverEvent('terminal.finished', {
                 host: hostInfo.hostId,
                 terminal: terminal.address,
-                exit_code: terminal.pid ? 0 : null, // We don't have actual exit code from list
+                exit_code: null, // Unknown - core doesn't expose exit code via list
                 reason: terminal.reason ?? 'unknown',
                 finished_ms: Date.now()
               });
             }
             
             // Update state
-            this.terminalStates.set(terminal.address, {
+            this.terminalStates.set(key, {
               host: hostInfo.hostId,
               status: currentStatus,
               state: currentState,
               created_ms: terminal.created_ms ?? null,
               pid: terminal.pid ?? null,
-              reason: terminal.reason ?? null
+              reason: terminal.reason ?? null,
+              createdAt: previous.createdAt
             });
           }
         }
         
         // Check for terminals that disappeared (finished)
-        for (const [address, previous] of this.terminalStates.entries()) {
+        for (const [key, previous] of this.terminalStates.entries()) {
           if (previous.host !== hostInfo.hostId) continue;
-          if (!currentTerminals.has(address)) {
+          if (!currentTerminals.has(key)) {
             // Terminal disappeared - emit finished
             await this.deliverEvent('terminal.finished', {
               host: hostInfo.hostId,
-              terminal: address,
+              terminal: previous.address || key.split('|')[1],
               exit_code: null,
               reason: 'disappeared',
               finished_ms: Date.now()
             });
-            this.terminalStates.delete(address);
+            this.terminalStates.delete(key);
           }
         }
       } catch (error) {
@@ -341,7 +475,7 @@ export class EventManager {
     return { events: eventsCatalog, nextCursor: null };
   }
 
-  async handleSubscribe(owner, params) {
+  async handleSubscribe(owner, params, allowPrivateForTesting = false) {
     const { name, arguments: args = {}, delivery, cursor, ttlMs } = params;
     
     const eventDef = this.getEventDefinition(name);
@@ -353,7 +487,8 @@ export class EventManager {
       throw new Error('Only webhook delivery mode is supported');
     }
 
-    validateCallbackUrl(delivery.url);
+    // Validate callback URL with SSRF protection
+    await validateCallbackUrl(delivery.url, allowPrivateForTesting);
     validateSecret(delivery.secret);
 
     // Validate arguments against event's inputSchema
@@ -435,7 +570,7 @@ export class EventManager {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        redirect: 'error',
+        redirect: 'error', // Disable redirects - SSRF protection
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
@@ -476,7 +611,8 @@ export class EventManager {
       const matches = this.matchSubscription(subscription, payload);
       if (!matches) continue;
 
-      await this.deliverToSubscription(subscription, eventName, payload);
+      // Add to outbox for reliable delivery with retries
+      this.enqueueDelivery(subscription, eventName, payload);
     }
   }
 
@@ -487,7 +623,7 @@ export class EventManager {
     return true;
   }
 
-  async deliverToSubscription(subscription, eventName, payload) {
+  enqueueDelivery(subscription, eventName, payload) {
     const eventId = generateEventId();
     const timestamp = new Date().toISOString();
     const event = {
@@ -510,34 +646,107 @@ export class EventManager {
     const webhookTimestamp = String(Math.floor(signedAt.getTime() / 1000));
     const signature = webhook.sign(webhookId, signedAt, body);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
+    this.outbox.push({
+      subscriptionId: subscription.id,
+      subscription,
+      eventName,
+      payload,
+      body,
+      webhookId,
+      webhookTimestamp,
+      signature,
+      attempts: 0,
+      nextRetryAt: Date.now()
+    });
 
-    try {
-      const response = await fetch(subscription.delivery.url, {
-        method: 'POST',
-        redirect: 'error',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'webhook-id': webhookId,
-          'webhook-timestamp': webhookTimestamp,
-          'webhook-signature': signature,
-          'X-MCP-Subscription-Id': subscription.id
-        },
-        body
-      });
+    // Kick off outbox processing
+    this.processOutbox();
+  }
 
-      clearTimeout(timeout);
-
-      if (response.ok) {
-        subscription.lastDeliveryAt = Date.now();
-      } else if (response.status === 410 || response.status === 413) {
-        this.subscriptions.delete(subscription.id);
+  async processOutbox() {
+    if (this.outboxProcessing || this.outbox.length === 0) return;
+    
+    this.outboxProcessing = true;
+    
+    while (this.outbox.length > 0) {
+      const now = Date.now();
+      const item = this.outbox[0];
+      
+      if (item.nextRetryAt > now) {
+        // Wait until next retry time
+        const delay = Math.min(item.nextRetryAt - now, 1000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
       }
-    } catch (error) {
-      clearTimeout(timeout);
-      console.error(`Webhook delivery failed for ${subscription.id}:`, error.message);
+      
+      // Remove from queue (we'll re-add if retry needed)
+      this.outbox.shift();
+      
+      try {
+        const response = await fetch(item.subscription.delivery.url, {
+          method: 'POST',
+          redirect: 'error',
+          signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+          headers: {
+            'Content-Type': 'application/json',
+            'webhook-id': item.webhookId,
+            'webhook-timestamp': item.webhookTimestamp,
+            'webhook-signature': item.signature,
+            'X-MCP-Subscription-Id': item.subscriptionId
+          },
+          body: item.body
+        });
+
+        if (response.ok) {
+          // Success - update last delivery time
+          item.subscription.lastDeliveryAt = Date.now();
+        } else if (response.status === 410 || response.status === 413) {
+          // Gone or payload too large - permanently remove subscription
+          this.subscriptions.delete(item.subscriptionId);
+        } else {
+          // Retryable error
+          item.attempts++;
+          if (item.attempts < MAX_RETRY_ATTEMPTS) {
+            const delay = Math.min(
+              INITIAL_RETRY_DELAY_MS * Math.pow(2, item.attempts - 1),
+              MAX_RETRY_DELAY_MS
+            );
+            item.nextRetryAt = Date.now() + delay;
+            this.outbox.unshift(item); // Re-add to front for next retry
+          } else {
+            console.error(`Max retries reached for subscription ${item.subscriptionId}, event ${item.eventName}`);
+          }
+        }
+      } catch (error) {
+        // Network error - retry
+        item.attempts++;
+        if (item.attempts < MAX_RETRY_ATTEMPTS) {
+          const delay = Math.min(
+            INITIAL_RETRY_DELAY_MS * Math.pow(2, item.attempts - 1),
+            MAX_RETRY_DELAY_MS
+          );
+          item.nextRetryAt = Date.now() + delay;
+          this.outbox.unshift(item);
+        } else {
+          console.error(`Max retries reached for subscription ${item.subscriptionId}, event ${item.eventName}: ${error.message}`);
+        }
+      }
+    }
+    
+    this.outboxProcessing = false;
+  }
+
+  async drainOutbox() {
+    // Process remaining items with immediate retries (bounded)
+    while (this.outbox.length > 0) {
+      const item = this.outbox.shift();
+      item.nextRetryAt = Date.now(); // Process immediately
+      this.outbox.unshift(item);
+      await this.processOutbox();
+      if (this.outbox.length > 0 && this.outbox[0].attempts >= MAX_RETRY_ATTEMPTS) {
+        // Skip items that have exhausted retries
+        this.outbox.shift();
+      }
     }
   }
 
@@ -559,4 +768,4 @@ export function createEventManager(core, config) {
   return new EventManager(core, config);
 }
 
-export { eventsCatalog };
+export { eventsCatalog, validateCallbackUrl, validateSecret, makeTerminalKey };
