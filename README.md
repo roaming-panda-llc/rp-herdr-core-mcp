@@ -161,3 +161,18 @@ See [MULTIHOST.md](MULTIHOST.md) for explicit host IDs/core pins, strict SSH bri
 restricted versus trusted-core policy, configured Pi/Claude profiles, model/provider
 argument variants, exact project directories, creation verification and uncertainty.
 No actual host is configured or enabled by installing this source.
+
+### Desktop workspace placement
+
+An operator may configure `desktopSpaces` on an agent profile, mapping an existing
+project ID to a Herdr desktop workspace ID, for example
+`"desktopSpaces": { "demo": "workspace-demo" }`. IDs contain 1–128 ASCII letters,
+digits, underscores or hyphens and start with a letter or digit. Only configured
+projects may be mapped; the mapping is optional and does not change tool inputs.
+
+Creation includes the configured workspace as the `herdr.space` terminal label
+in the initial `terminal.run` request. Receipts expose `desktop_space` and
+`desktop_visibility_requested`; these describe placement metadata, not proof that
+a desktop window rendered the terminal. No desktop document or existing terminal
+is rewritten. Reconciliation retains an existing terminal's placement even if the
+operator later changes the mapping, and cached receipts remain explicitly stale.
