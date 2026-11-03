@@ -6,13 +6,139 @@ import { createSession } from './create.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { McpError, ErrorCode, RequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32);
+
+const eventsCatalog = [
+  {
+    name: 'terminal.created',
+    description: 'A new terminal session was created on the configured core',
+    delivery: ['webhook'],
+    inputSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'Host/profile ID to filter by' }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    payloadSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string' },
+        terminal: { type: 'string' },
+        created_ms: { type: 'number' },
+        name: { type: 'string' },
+        profile: { type: 'string' },
+        project: { type: 'string' }
+      },
+      required: ['host', 'terminal', 'created_ms'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'terminal.status_changed',
+    description: 'Terminal status transitioned (idle/working/done/blocked/error)',
+    delivery: ['webhook'],
+    inputSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'Host/profile ID to filter by' },
+        terminal: { type: 'string', description: 'Terminal address to filter by' }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    payloadSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string' },
+        terminal: { type: 'string' },
+        previous_status: { type: 'string' },
+        new_status: { type: 'string' },
+        timestamp_ms: { type: 'number' }
+      },
+      required: ['host', 'terminal', 'previous_status', 'new_status', 'timestamp_ms'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'terminal.finished',
+    description: 'Terminal session finished (exited, was terminated, or holder lost)',
+    delivery: ['webhook'],
+    inputSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'Host/profile ID to filter by' },
+        terminal: { type: 'string', description: 'Terminal address to filter by' }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    payloadSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string' },
+        terminal: { type: 'string' },
+        exit_code: { type: ['number', 'null'] },
+        reason: { type: ['string', 'null'] },
+        finished_ms: { type: 'number' }
+      },
+      required: ['host', 'terminal', 'finished_ms'],
+      additionalProperties: false
+    }
+  }
+];
 const textResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const clip = (value, length = 512) => typeof value === 'string' ? value.slice(0, length) : null;
 export function makeServer(core, config) {
   const bridgeMayStartCore = core instanceof HostRuntime && [...core.hosts.values()].some(h => h.config.connection.type === 'ssh');
   const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.2.0' });
+
+  // Register events capability and handlers if enabled (opt-in, default disabled)
+  if (config.events?.enabled === true) {
+    server.server.registerCapabilities({ events: {} });
+
+    // Define event request schemas with method literals
+    const EventsListRequestSchema = RequestSchema.extend({
+      method: z.literal('events/list'),
+      params: z.object({ cursor: z.string().optional() }).optional()
+    });
+    const EventsSubscribeRequestSchema = RequestSchema.extend({
+      method: z.literal('events/subscribe'),
+      params: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url(), secret: z.string() }).optional(), cursor: z.unknown().nullable().optional() }).optional()
+    });
+    const EventsUnsubscribeRequestSchema = RequestSchema.extend({
+      method: z.literal('events/unsubscribe'),
+      params: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url() }).optional() }).optional()
+    });
+
+    // events/list - returns the event catalog
+    server.server.setRequestHandler(
+      EventsListRequestSchema,
+      async ({ params }) => {
+        return { events: eventsCatalog, nextCursor: null };
+      }
+    );
+
+    // events/subscribe - stub for Milestone 2
+    server.server.setRequestHandler(
+      EventsSubscribeRequestSchema,
+      async () => {
+        throw new McpError(ErrorCode.MethodNotFound, 'events/subscribe not implemented in this milestone');
+      }
+    );
+    
+    // events/unsubscribe - stub for Milestone 2
+    server.server.setRequestHandler(
+      EventsUnsubscribeRequestSchema,
+      async () => {
+        throw new McpError(ErrorCode.MethodNotFound, 'events/unsubscribe not implemented in this milestone');
+      }
+    );
+  }
+
   const wrap = fn => async (args, extra) => {
     try { return textResult(await fn(args, extra)); }
     catch (error) { return { isError: true, content: [{ type: 'text', text: error.message.slice(0, 1000) }] }; }

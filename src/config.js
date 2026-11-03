@@ -34,6 +34,10 @@ const host = z.object({
   if (Object.keys(v.profiles).length > 8) c.addIssue({ code: 'custom', message: 'At most 8 profiles per host' });
   if (Object.keys(v.profiles).length && v.accessMode !== 'trusted-core') c.addIssue({ code: 'custom', message: 'Creation profiles require explicit trusted-core access' });
 });
+const events = z.object({
+  enabled: z.boolean().default(false)
+}).strict();
+
 export const configSchema = z.object({
   ...policy,
   socketPath: absolutePath.refine(s => s.length <= 103).optional(),
@@ -41,7 +45,8 @@ export const configSchema = z.object({
   defaultHost: idSchema.optional(),
   transport: z.enum(['stdio', 'http']).default('stdio'),
   port: z.number().int().min(1024).max(65535).default(8787),
-  publicOrigin: z.string().url().optional()
+  publicOrigin: z.string().url().optional(),
+  events: events.optional()
 }).strict().superRefine((v, c) => {
   if (!!v.hosts === !!v.socketPath) c.addIssue({ code: 'custom', message: 'Configure either legacy socketPath or named hosts, not both' });
   if (v.hosts && (v.coreId || v.sendAllowlist.length || v.accessMode !== 'restricted' || v.sendMode !== 'idle-only')) c.addIssue({ code: 'custom', message: 'Set write policies inside each named host, not at top level' });
