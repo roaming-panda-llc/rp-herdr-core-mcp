@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 const addressPattern = /^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/;
 const digest = value => createHash('sha256').update(value).digest('hex');
-export async function createSession(host, input, signal) {
+export async function createSession(host, input, signal, eventManager) {
   const { config, core, ledger } = host;
   if (config.accessMode !== 'trusted-core' || !config.coreId || !ledger) throw new Error('Session creation requires an explicitly trusted configured core');
   const profile = config.profiles && Object.hasOwn(config.profiles, input.profile) ? config.profiles[input.profile] : null;
@@ -39,10 +39,28 @@ export async function createSession(host, input, signal) {
       current.labels?.rp_mcp_request === input.request_id && current.labels?.rp_mcp_fingerprint === fingerprint &&
       JSON.stringify(current.argv) === JSON.stringify(argv);
     const live = same && current.state === 'live' && Number.isSafeInteger(current.pid) && current.pid > 0 && !current.reason;
-    return { host: host.id, terminal: record.address, created_ms: record.created_ms, request_id: input.request_id,
+    const resultData = { host: host.id, terminal: record.address, created_ms: record.created_ms, request_id: input.request_id,
       created_now: !prior.length, cached_receipt: false, verification_is_current: true, verified: !!live, ready: !!live && ['idle', 'done'].includes(current.status?.state),
       status: typeof current?.status?.state === 'string' ? current.status.state.slice(0, 128) : null,
       outcome: live ? 'running_verified' : 'not_ready_or_unverified', adapter_prompt_sent: false };
+    
+    if (eventManager && !prior.length) {
+      try {
+        await eventManager.deliverEvent('terminal.created', {
+          host: host.id,
+          terminal: record.address,
+          created_ms: record.created_ms,
+          name: record.name ?? '',
+          profile: input.profile,
+          project: input.project
+        });
+      } catch (e) {
+        // Don't fail the request if event delivery fails
+        console.error('Failed to emit terminal.created event:', e.message);
+      }
+    }
+    
+    return resultData;
   })();
   // Set before awaiting: concurrent identical calls share the same attempt. Never
   // evict/replay failures. Core labels support restart reconciliation, not exactly-once.

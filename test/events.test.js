@@ -8,6 +8,7 @@ import { HostRuntime } from '../src/runtime.js';
 import { CoreClient } from '../src/core.js';
 import { makeServer } from '../src/server.js';
 import { ResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createHash } from 'node:crypto';
 
 function mockCore(identity) {
   const calls = [];
@@ -17,12 +18,22 @@ function mockCore(identity) {
     async call(method, params, expected) {
       calls.push({ method, params, expected });
       assert.equal(expected, identity);
-      if (method === 'hello') return { version: '0.1.15', generation: 1, framed: false, core: { id: identity }, methods: ['terminal.list', 'terminal.read', 'terminal.send'] };
+      if (method === 'hello') return { version: '0.1.15', generation: 1, framed: false, core: { id: identity }, methods: ['terminal.list', 'terminal.read', 'terminal.send', 'terminal.run', 'terminal.get'] };
       if (method === 'terminal.list') return { terminals: [] };
       if (method === 'terminal.read') return { text: identity, complete: true, how: 'screen' };
-      throw new Error('Unexpected method');
+      if (method === 'terminal.run') return { address: 't1b', created_ms: Date.now(), pid: 123, state: 'live', reason: null, status: { state: 'idle' } };
+      if (method === 'terminal.get') return { address: 't1b', created_ms: Date.now(), pid: 123, state: 'live', reason: null, status: { state: 'idle' }, argv: ['test'], labels: {} };
+      throw new Error('Unexpected method: ' + method);
     }
   };
+}
+
+const validSecret = 'whsec_' + Buffer.from(randomBytes(32)).toString('base64');
+
+function randomBytes(len) {
+  const buf = new Uint8Array(len);
+  for (let i = 0; i < len; i++) buf[i] = Math.floor(Math.random() * 256);
+  return buf;
 }
 
 async function setup(t, eventsEnabled = false) {
@@ -99,20 +110,51 @@ test('events/list ignores cursor parameter', async t => {
   assert.equal(result.nextCursor, null);
 });
 
-test('events/subscribe returns MethodNotFound (stub)', async t => {
+test('events/subscribe rejects invalid secret', async t => {
   const { client } = await setup(t, true);
   await assert.rejects(
     client.request({ method: 'events/subscribe', params: { name: 'terminal.created', arguments: {}, delivery: { mode: 'webhook', url: 'https://example.com/callback', secret: 'whsec_test' } } }, ResultSchema),
-    /MethodNotFound|not implemented/
+    /Secret must decode to 24-64 bytes/
   );
 });
 
-test('events/unsubscribe returns MethodNotFound (stub)', async t => {
+test('events/subscribe rejects non-HTTPS callback URL', async t => {
   const { client } = await setup(t, true);
   await assert.rejects(
-    client.request({ method: 'events/unsubscribe', params: { name: 'terminal.created', arguments: {}, delivery: { mode: 'webhook', url: 'https://example.com/callback' } } }, ResultSchema),
-    /MethodNotFound|not implemented/
+    client.request({ method: 'events/subscribe', params: { name: 'terminal.created', arguments: {}, delivery: { mode: 'webhook', url: 'http://example.com/callback', secret: validSecret } } }, ResultSchema),
+    /Callback URL must use HTTPS/
   );
+});
+
+test('events/subscribe rejects localhost callback URL', async t => {
+  const { client } = await setup(t, true);
+  await assert.rejects(
+    client.request({ method: 'events/subscribe', params: { name: 'terminal.created', arguments: {}, delivery: { mode: 'webhook', url: 'https://localhost/callback', secret: validSecret } } }, ResultSchema),
+    /Callback URL must not target localhost/
+  );
+});
+
+test('events/subscribe rejects unknown event', async t => {
+  const { client } = await setup(t, true);
+  await assert.rejects(
+    client.request({ method: 'events/subscribe', params: { name: 'unknown.event', arguments: {}, delivery: { mode: 'webhook', url: 'https://example.com/callback', secret: validSecret } } }, ResultSchema),
+    /Unknown event/
+  );
+});
+
+test('events/subscribe rejects invalid arguments for event', async t => {
+  const { client } = await setup(t, true);
+  await assert.rejects(
+    client.request({ method: 'events/subscribe', params: { name: 'terminal.created', arguments: { invalid_field: 'value' }, delivery: { mode: 'webhook', url: 'https://example.com/callback', secret: validSecret } } }, ResultSchema),
+    /Invalid arguments|Unknown keys/ // Zod strict mode rejects unknown keys
+  );
+});
+
+test('events/unsubscribe removes subscription (idempotent)', async t => {
+  const { client } = await setup(t, true);
+  // Unsubscribe is idempotent - it succeeds even if subscription doesn't exist
+  const result = await client.request({ method: 'events/unsubscribe', params: { name: 'terminal.created', arguments: {}, delivery: { mode: 'webhook', url: 'https://example.com/callback' } } }, ResultSchema);
+  assert.deepEqual(result, {});
 });
 
 test('unknown event method returns MethodNotFound', async t => {

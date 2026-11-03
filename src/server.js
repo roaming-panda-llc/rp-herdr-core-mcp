@@ -7,89 +7,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { McpError, ErrorCode, RequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createEventManager, eventsCatalog } from './events.js';
 
 const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32);
-
-const eventsCatalog = [
-  {
-    name: 'terminal.created',
-    description: 'A new terminal session was created on the configured core',
-    delivery: ['webhook'],
-    inputSchema: {
-      type: 'object',
-      properties: {
-        host: { type: 'string', description: 'Host/profile ID to filter by' }
-      },
-      required: [],
-      additionalProperties: false
-    },
-    payloadSchema: {
-      type: 'object',
-      properties: {
-        host: { type: 'string' },
-        terminal: { type: 'string' },
-        created_ms: { type: 'number' },
-        name: { type: 'string' },
-        profile: { type: 'string' },
-        project: { type: 'string' }
-      },
-      required: ['host', 'terminal', 'created_ms'],
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'terminal.status_changed',
-    description: 'Terminal status transitioned (idle/working/done/blocked/error)',
-    delivery: ['webhook'],
-    inputSchema: {
-      type: 'object',
-      properties: {
-        host: { type: 'string', description: 'Host/profile ID to filter by' },
-        terminal: { type: 'string', description: 'Terminal address to filter by' }
-      },
-      required: [],
-      additionalProperties: false
-    },
-    payloadSchema: {
-      type: 'object',
-      properties: {
-        host: { type: 'string' },
-        terminal: { type: 'string' },
-        previous_status: { type: 'string' },
-        new_status: { type: 'string' },
-        timestamp_ms: { type: 'number' }
-      },
-      required: ['host', 'terminal', 'previous_status', 'new_status', 'timestamp_ms'],
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'terminal.finished',
-    description: 'Terminal session finished (exited, was terminated, or holder lost)',
-    delivery: ['webhook'],
-    inputSchema: {
-      type: 'object',
-      properties: {
-        host: { type: 'string', description: 'Host/profile ID to filter by' },
-        terminal: { type: 'string', description: 'Terminal address to filter by' }
-      },
-      required: [],
-      additionalProperties: false
-    },
-    payloadSchema: {
-      type: 'object',
-      properties: {
-        host: { type: 'string' },
-        terminal: { type: 'string' },
-        exit_code: { type: ['number', 'null'] },
-        reason: { type: ['string', 'null'] },
-        finished_ms: { type: 'number' }
-      },
-      required: ['host', 'terminal', 'finished_ms'],
-      additionalProperties: false
-    }
-  }
-];
 const textResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const clip = (value, length = 512) => typeof value === 'string' ? value.slice(0, length) : null;
 export function makeServer(core, config) {
@@ -97,7 +17,10 @@ export function makeServer(core, config) {
   const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.2.0' });
 
   // Register events capability and handlers if enabled (opt-in, default disabled)
+  let eventManager;
   if (config.events?.enabled === true) {
+    eventManager = createEventManager(core, config);
+    eventManager.startPolling();
     server.server.registerCapabilities({ events: {} });
 
     // Define event request schemas with method literals
@@ -107,7 +30,7 @@ export function makeServer(core, config) {
     });
     const EventsSubscribeRequestSchema = RequestSchema.extend({
       method: z.literal('events/subscribe'),
-      params: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url(), secret: z.string() }).optional(), cursor: z.unknown().nullable().optional() }).optional()
+      params: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url(), secret: z.string() }).optional(), cursor: z.unknown().nullable().optional(), ttlMs: z.number().int().positive().nullable().optional() }).optional()
     });
     const EventsUnsubscribeRequestSchema = RequestSchema.extend({
       method: z.literal('events/unsubscribe'),
@@ -117,24 +40,36 @@ export function makeServer(core, config) {
     // events/list - returns the event catalog
     server.server.setRequestHandler(
       EventsListRequestSchema,
-      async ({ params }) => {
-        return { events: eventsCatalog, nextCursor: null };
+      async ({ params }, extra) => {
+        return eventManager.handleList(params);
       }
     );
 
-    // events/subscribe - stub for Milestone 2
+    // events/subscribe - creates or refreshes a subscription
     server.server.setRequestHandler(
       EventsSubscribeRequestSchema,
-      async () => {
-        throw new McpError(ErrorCode.MethodNotFound, 'events/subscribe not implemented in this milestone');
+      async ({ params }, extra) => {
+        const auth = extra?.requestInfo?.headers?.authorization;
+        const owner = auth ? `bearer:${createHash('sha256').update(auth).digest('hex').slice(0, 16)}` : 'unknown';
+        try {
+          return await eventManager.handleSubscribe(owner, params);
+        } catch (error) {
+          throw new McpError(ErrorCode.InvalidParams, error.message);
+        }
       }
     );
     
-    // events/unsubscribe - stub for Milestone 2
+    // events/unsubscribe - stops a subscription
     server.server.setRequestHandler(
       EventsUnsubscribeRequestSchema,
-      async () => {
-        throw new McpError(ErrorCode.MethodNotFound, 'events/unsubscribe not implemented in this milestone');
+      async ({ params }, extra) => {
+        const auth = extra?.requestInfo?.headers?.authorization;
+        const owner = auth ? `bearer:${createHash('sha256').update(auth).digest('hex').slice(0, 16)}` : 'unknown';
+        try {
+          return await eventManager.handleUnsubscribe(owner, params);
+        } catch (error) {
+          throw new McpError(ErrorCode.InvalidParams, error.message);
+        }
       }
     );
   }
@@ -206,7 +141,7 @@ export function makeServer(core, config) {
     description: 'Launch an operator-configured agent profile in an approved exact project directory on an explicitly trusted core. No shell or caller arguments. request_id supports reconciliation, not exactly-once; never retry with a new ID after uncertain creation. The adapter adds no initial prompt; configured profile arguments remain operator-trusted. Verify readiness and read before send_prompt.',
     inputSchema: { host: idSchema.optional(), profile: idSchema, project: idSchema, variant: idSchema.optional(), name: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,31}$/).refine(s => !/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/.test(s), 'Name must not look like a terminal ID').optional(), request_id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
-  }, wrap(async (args, extra) => createSession(resolveHost(core, config, args.host), args, extra.signal)));
+  }, wrap(async (args, extra) => createSession(resolveHost(core, config, args.host), args, extra.signal, eventManager)));
   return server;
 }
 export function makeHttpApp(core, config, token) {
