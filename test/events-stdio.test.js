@@ -62,7 +62,8 @@ test('real stdio entrypoint persists subscriptions across requests and restart w
   const first = await connect();
   await eventually(() => reads > 0);
   const secret = 'whsec_' + Buffer.alloc(32, 7).toString('base64');
-  const params = { name: 'terminal.created', arguments: { host: 'local' }, delivery: { mode: 'webhook', url: 'https://callback.example/hooks', secret } };
+  const params = { _meta: { progressToken: 7, 'example/context': 'test-only' }, name: 'terminal.created', arguments: { host: 'local' }, delivery: { mode: 'webhook', url: 'https://callback.example/hooks', secret } };
+  await assert.rejects(first.client.request({ method: 'events/subscribe', params: { ...params, unexpected: 'private-test-value' } }, ResultSchema), e => e.code === -32603);
   const subscription = await first.client.request({ method: 'events/subscribe', params }, ResultSchema);
   assert.equal((await callbacks())[0].subscriptionId, subscription.id);
   assert.equal((await first.client.request({ method: 'events/list', params: {} }, ResultSchema)).events.length, 3);
@@ -72,7 +73,7 @@ test('real stdio entrypoint persists subscriptions across requests and restart w
   const firstPid = first.transport.pid;
   await first.client.close();
   assert.throws(() => process.kill(firstPid, 0), { code: 'ESRCH' });
-  assert.equal(first.stderr(), '');
+  assert.deepEqual(first.stderr().trim().split('\n').map(JSON.parse), [{ method: 'events/subscribe', outcome: 'rejected', category: 'schema_invalid' }, { method: 'events/subscribe', outcome: 'accepted', category: 'success' }]);
   const stored = new EventStore(stateDirectory).load();
   assert.equal(stored.subscriptions.length, 1);
   assert.equal(stored.subscriptions[0].owner, 'stdio');

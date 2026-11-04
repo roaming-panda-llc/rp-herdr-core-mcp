@@ -13,6 +13,16 @@ const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32
 const textResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const clip = (value, length = 512) => typeof value === 'string' ? value.slice(0, length) : null;
 
+// Reuse the SDK's metadata validation, including progress tokens and extensions.
+const requestMeta = RequestSchema.shape.params.unwrap().shape._meta;
+const callbackCategories = new Set(['challenge_failed', 'timeout', 'http_4xx', 'http_5xx']);
+function logSubscribeOutcome(outcome, category) {
+  // Only internal constants reach this sink. Never log request data or exceptions.
+  // Diagnostics must not change the result if the stderr sink is unavailable.
+  try { console.error(JSON.stringify({ method: 'events/subscribe', outcome, category })); } catch {}
+}
+
+
 export function makeServer(core, config, sharedEventManager, principal = 'stdio') {
   const bridgeMayStartCore = core instanceof HostRuntime && [...core.hosts.values()].some(h => h.config.connection.type === 'ssh');
   const server = new McpServer({ name: 'rp-herdr-core-mcp', version: '0.2.0' });
@@ -48,15 +58,21 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
     // Define event request schemas with method literals
     const EventsListRequestSchema = RequestSchema.extend({
       method: z.literal('events/list'),
-      params: z.object({ cursor: z.string().optional() }).optional()
+      params: z.object({ _meta: requestMeta, cursor: z.string().optional() }).optional()
     });
+    const subscribeParams = z.object({ _meta: requestMeta, name: z.string(), arguments: z.record(z.string(), z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url().max(2048), secret: z.string().max(128) }).strict(), cursor: z.string().max(128).nullable().optional(), ttlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional() }).strict();
     const EventsSubscribeRequestSchema = RequestSchema.extend({
       method: z.literal('events/subscribe'),
-      params: z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url().max(2048), secret: z.string().max(128) }).strict(), cursor: z.string().max(128).nullable().optional(), ttlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional() }).strict()
+      // Observe validation without replacing SDK parsing/error behavior. Keeping
+      // the method literal intact also preserves SDK capability checks.
+      params: z.preprocess(value => {
+        if (!subscribeParams.safeParse(value).success) logSubscribeOutcome('rejected', 'schema_invalid');
+        return value;
+      }, subscribeParams)
     });
     const EventsUnsubscribeRequestSchema = RequestSchema.extend({
       method: z.literal('events/unsubscribe'),
-      params: z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url().max(2048) }).strict() }).strict()
+      params: z.object({ _meta: requestMeta, name: z.string(), arguments: z.record(z.string(), z.unknown()).optional(), delivery: z.object({ mode: z.literal('webhook'), url: z.string().url().max(2048) }).strict() }).strict()
     });
 
     // events/list - returns the event catalog
@@ -73,8 +89,13 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
       async ({ params }, extra) => {
         const owner = principal;
         try {
-          return await eventManager.handleSubscribe(owner, params);
+          const result = await eventManager.handleSubscribe(owner, params);
+          logSubscribeOutcome('accepted', 'success');
+          return result;
         } catch (error) {
+          const callback = error.code === -32015;
+          const reason = callback && callbackCategories.has(error.data?.reason) ? error.data.reason : 'callback_failed';
+          logSubscribeOutcome('rejected', callback ? reason : 'handler_failed');
           throw new McpError(error.code === -32015 ? -32015 : ErrorCode.InvalidParams, error.message, error.data);
         }
       }

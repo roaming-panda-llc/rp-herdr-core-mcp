@@ -102,3 +102,32 @@ stdio manager lives for its adapter process, not for an individual MCP request.
 The tunnel must keep one process alive during idle periods; multiple processes
 must not share this single-writer store. Successful capability discovery alone
 neither creates a subscription nor proves a live ChatGPT wake-up.
+
+## Subscription diagnostics
+
+Events request parameters accept the SDK's standard `_meta` field, including
+progress tokens and extension metadata. Other subscription and unsubscribe
+parameters remain strict.
+
+The adapter writes one JSON line to stderr for each subscription outcome that
+reaches its schema or handler. Records contain only `method`, `outcome`, and a
+fixed `category`, for example:
+
+```json
+{"method":"events/subscribe","outcome":"rejected","category":"schema_invalid"}
+{"method":"events/subscribe","outcome":"rejected","category":"challenge_failed"}
+{"method":"events/subscribe","outcome":"accepted","category":"success"}
+```
+
+Categories distinguish `schema_invalid`, `handler_failed`, and callback failures
+(`challenge_failed`, `timeout`, `http_4xx`, `http_5xx`, or `callback_failed`). They
+exclude URLs, secrets, arguments, metadata values, IDs, headers, challenge values,
+and exception messages. The host's stderr collector can supply timestamps.
+A successful handler outcome does not prove delivery of its response or a task
+wake-up. Failures before method dispatch (including malformed JSON-RPC envelopes
+or metadata rejected by the transport/SDK) are not covered. No request payload
+capture or transport instrumentation is enabled.
+
+SDK error behavior is unchanged: the pinned SDK returns `-32603` for these schema
+parse errors; Herdr handler errors use `-32602`, while callback verification errors
+use `-32015`. Schema diagnostics do not change or suppress protocol responses.
