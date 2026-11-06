@@ -19,7 +19,7 @@ lifetimes. This package does not authorize deployment or security-setting change
    script paths, keeping its private config path and credential references. Stop
    the old adapter/client before starting a replacement. When a tunnel is involved,
    preserve its identity and access controls; one active client per tunnel.
-6. Discover exactly five tools and verify list/screen reads. Do not use send to
+6. Discover exactly six tools and verify list/screen reads. Do not use send to
    test authentication. For approved follow-up support, set `sendMode: "normal"`
    explicitly in the private config, retain the same core/terminal lifetime pins,
    and accept the documented done-to-working race. Without this setting old
@@ -66,3 +66,18 @@ is required for an hc SSH bridge. Initially test list_hosts/list/read; only then
 perform a specifically authorized creation. Verify the returned lifetime/startup
 and screen before sending a task. Use one stable creation request ID and never
 replay uncertain creation with a new ID. Retain the session for investigation.
+
+
+## Escape activation
+
+Read ESCAPE.md before activation. `press_escape` is separate from send/create
+permissions and only accepts core 0.1.15/0.1.16. Do not downgrade a newer core or
+broaden the version/state gates to make activation pass. Preserve all existing
+host identities, session lifetimes and private configuration. Enable Escape only
+on an approved compatible host; use exact expiring non-approval UI cancellation
+approvals, never a blanket session grant. Verify tool discovery/read-only access
+before an independently inspected, explicitly authorized cancellation. A
+synthetic disposable test session is preferred for deployment verification;
+preserve unrelated sessions and drafts. If no compatible host or supported
+operator access is available, report activation blocked rather than weakening
+guards or claiming an enabled but unusable control is verified.
