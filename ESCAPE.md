@@ -95,9 +95,9 @@ Reviewed upstream tag v0.1.15 commit
 Those input/types/encoding files are identical in v0.1.16. Upstream
 `keys::tests::names_encode_like_a_real_terminal_in_the_programs_modes` asserts
 legacy Escape `0x1b` and Kitty Escape `ESC[27u`. The adapter delegates encoding
-unchanged. This workspace has no Cargo/Rust toolchain; that upstream encoding
-test was inspected but not executed here. The isolated tests exercise the
-adapter and real socket protocol against a mock core, not a live PTY/core.
+unchanged. The original implementation inspected this test without executing it. The
+initial adapter integration tests used mock core sockets. Subsequent real
+runtime validation is recorded below and does not rely on those mocks.
 
 
 ## Refresh onto main (2026-11-06)
@@ -114,7 +114,62 @@ submodule (`1e5cdb865807abc990181efb8ebfa9122955cce2`) is uninitialized.
 `crates/ghostty-vt/build.rs` requires Zig 0.16 plus that submodule; source tests
 also require the Rust/Cargo toolchain. GitHub's upstream releases API returned
 an empty release list (v0.1.16 release lookup returned 404), so no release binary
-was available through that route. Real synthetic core/PTY encoding tests remain
-unexecuted for these current missing prerequisites, not an authorization denial.
-The next validation environment needs a reviewed core executable, or Rust/Cargo,
-Zig 0.16, and the pinned Ghostty source. No installed or user core was contacted.
+was available through that route. At that inspection, real synthetic core/PTY encoding tests were unexecuted
+for these missing prerequisites, not an authorization denial.
+The project-local setup below subsequently supplied those prerequisites.
+No installed or user core was contacted.
+
+
+## Real runtime validation (2026-11-06)
+
+The missing prerequisites were resolved with project-local official tooling:
+Rust/Cargo **1.95.0**, Zig **0.16.0**, and Ghostty commit
+`1e5cdb865807abc990181efb8ebfa9122955cce2`, matching upstream CI/submodule pins.
+Rust's installer and the Zig archive were checked against their official SHA-256
+values. Cargo used the unchanged lockfile. Zig's downloader encountered
+`HttpConnectionClosing`; downloading the same upstream-pinned dependency URLs
+through the normal proxy and checking their Zig package hashes resolved it.
+No TLS/proxy/security settings were changed. Builds were capped at two CPUs,
+two Cargo jobs and ten minutes per command, in an independent cloud workspace.
+
+| Core version | Exact upstream commit | Upstream encoding unit test | Real PTY cases |
+| --- | --- | --- | --- |
+| 0.1.15 | `9e934dff8513710d3c5111fe28bc5b23564805db` | 1 passed | 7 passed |
+| 0.1.16 | `e07c2a1bedd62cf4787ee026ee23ee79c7d95491` | 1 passed | 7 passed |
+
+The upstream test was executed with:
+
+```sh
+cargo test --locked -p herdr-core --lib \
+  keys::tests::names_encode_like_a_real_terminal_in_the_programs_modes \
+  -- --exact --nocapture
+cargo build --locked -p herdr-core --bin herdr-core
+```
+
+The opt-in Linux harness runs against an explicitly supplied, reviewed binary:
+
+```sh
+node scripts/validate-escape-pty.mjs /absolute/path/to/herdr-core
+```
+
+It starts its own core with a private temporary socket and XDG directories,
+creates synthetic Python raw-mode PTYs, and calls the adapter's actual
+`pressEscape` and `CoreClient` paths. It does not reuse any existing core/session,
+contact an LLM, or read operator configuration. This validates the adapter/core/
+PTY path; MCP transport is covered separately by the existing integration suite.
+
+For each allowed core version:
+
+- Idle and done in legacy mode each receive exactly `1b` (Escape).
+- Idle and done in Kitty mode each receive exactly `1b5b323775` (`ESC[27u`).
+- Each successful case performs screen readback and rejects a repeated action ID
+  without receiving another byte.
+- Blocked, error, and working each fail preflight and receive no bytes.
+- Owned programs/core exit and temporary paths are removed; failure cleanup
+  preserves both the original error and any cleanup errors.
+
+These are real PTY receipts, not mock assertions or inferred source behavior.
+They cover both versions allowed for Escape and do not justify widening that
+allowlist. They also do not remove core's non-atomic delivery race or make
+blocked/error/working recovery safe. The production control implementation and
+all its approval/replay/unknown-outcome guards were left unchanged.
