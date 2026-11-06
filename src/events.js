@@ -146,8 +146,20 @@ export class EventManager {
     this.autoDispatch = autoDispatch;
     this.state = this.store?.load() ?? { version: 1, subscriptions: [], outbox: [], history: [], sequence: 0, terminals: [], initializedHosts: [], created: [] };
     if (this.state.version !== 1 || !Array.isArray(this.state.subscriptions) || !Array.isArray(this.state.outbox) || !Array.isArray(this.state.history) || !Array.isArray(this.state.terminals) || !Array.isArray(this.state.created) || !Array.isArray(this.state.initializedHosts) || !Number.isSafeInteger(this.state.sequence) || this.state.subscriptions.length > MAX_SUBSCRIPTIONS || this.state.outbox.length > MAX_OUTBOX || this.state.history.length > MAX_HISTORY || this.state.terminals.length > MAX_TERMINALS) throw new Error('Invalid event state');
-    const scope = createHash('sha256').update(JSON.stringify({ hosts: config.hosts, coreId: config.coreId, socketPath: config.socketPath })).digest('hex');
-    if (this.state.scope && this.state.scope !== scope) throw new Error('Event storage belongs to a different core configuration');
+    // Escape approvals authorize input, not event observation. Preserve the exact
+    // pre-Escape serialization (including order and every other host field), so
+    // adding/changing/removing that policy does not strand existing event state.
+    const scopeFor = hosts => createHash('sha256').update(JSON.stringify({ hosts, coreId: config.coreId, socketPath: config.socketPath })).digest('hex');
+    const eventHosts = config.hosts && Object.fromEntries(Object.entries(config.hosts).map(([id, host]) => {
+      const { escape, ...eventHost } = host;
+      return [id, eventHost];
+    }));
+    const scope = scopeFor(eventHosts);
+    const migrateScope = !!this.state.scope && this.state.scope !== scope;
+    // A store written by the initial Escape release can be migrated only when
+    // its full legacy hash matches this exact current configuration. Never
+    // accept an arbitrary old scope or try to infer identity from stored data.
+    if (migrateScope && this.state.scope !== scopeFor(config.hosts)) throw new Error('Event storage belongs to a different core configuration');
     this.state.scope = scope;
     this.verificationCache = new Map();
     this.pending = new Map();
@@ -156,6 +168,7 @@ export class EventManager {
     this.controllers = new Map();
     this.pollingHosts = [];
     this.shuttingDown = false;
+    if (migrateScope) this.persist();
     this.cleanupExpired();
   }
   persist() {
