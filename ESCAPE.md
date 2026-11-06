@@ -98,3 +98,23 @@ legacy Escape `0x1b` and Kitty Escape `ESC[27u`. The adapter delegates encoding
 unchanged. This workspace has no Cargo/Rust toolchain; that upstream encoding
 test was inspected but not executed here. The isolated tests exercise the
 adapter and real socket protocol against a mock core, not a live PTY/core.
+
+
+## Refresh onto main (2026-11-06)
+
+Reconciled onto main `190d723447e842d8fcf7174b3cb1d7262485ba98`, retaining
+Events discovery/delivery, desktop placement, and the original tools' forward
+version tolerance. Escape alone keeps its reviewed 0.1.15/0.1.16 gate; even
+0.1.17 is rejected for Escape until its key path is reviewed and validated.
+All cancellation and unknown-outcome guards remain unchanged.
+
+Fresh test-prerequisite inspection found no `cargo`, `rustc`, `zig`, or `hc`
+on PATH. The upstream reference has no built binary and its pinned Ghostty
+submodule (`1e5cdb865807abc990181efb8ebfa9122955cce2`) is uninitialized.
+`crates/ghostty-vt/build.rs` requires Zig 0.16 plus that submodule; source tests
+also require the Rust/Cargo toolchain. GitHub's upstream releases API returned
+an empty release list (v0.1.16 release lookup returned 404), so no release binary
+was available through that route. Real synthetic core/PTY encoding tests remain
+unexecuted for these current missing prerequisites, not an authorization denial.
+The next validation environment needs a reviewed core executable, or Rust/Cargo,
+Zig 0.16, and the pinned Ghostty source. No installed or user core was contacted.

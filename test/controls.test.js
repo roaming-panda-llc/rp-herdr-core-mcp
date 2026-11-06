@@ -135,7 +135,7 @@ for (const failure of ['timeout', 'disconnect', 'malformed', 'shape', 'rejected'
   await assert.rejects(f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'), e => e.delivery === 'unknown' && /no automatic retry/.test(e.message));
   assert.equal(f.calls.filter(c => c.method === 'terminal.keys').length, 1);
 });
-for (const override of [{ version: '0.2.0' }, { methods: [] }, { core: { id: 'wrong' } }]) test(`keys capability/version/identity fails closed: ${JSON.stringify(override)}`, async t => {
+for (const override of [{ version: '0.2.0' }, { version: '0.1.17' }, { methods: [] }, { core: { id: 'wrong' } }]) test(`keys capability/version/identity fails closed: ${JSON.stringify(override)}`, async t => {
   const f = await wire(t, 'success', override);
   await assert.rejects(f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'));
   assert.ok(!f.calls.some(c => c.method === 'terminal.keys'));
@@ -185,4 +185,10 @@ test('Escape passes the exact approval expiry to the core dispatch gate', async 
     return call(...a);
   };
   await pressEscape(f.ctx, args);
+});
+
+test('reviewed Escape version 0.1.16 remains supported on the combined branch', async t => {
+  const f = await wire(t, 'success', { version: '0.1.16' });
+  assert.deepEqual(await f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'), { status: 'idle', turn: 1 });
+  assert.equal(f.calls.filter(c => c.method === 'terminal.keys').length, 1);
 });

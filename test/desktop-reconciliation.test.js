@@ -53,12 +53,12 @@ test('desktop mappings are optional, bounded and limited to configured project I
  }
  assert.equal(configSchema.parse(configured({ demo: 'A_1-workspace' })).hosts.local.profiles.coding.desktopSpaces.demo, 'A_1-workspace');
 });
-test('MCP create labels the initial run for its configured desktop workspace and keeps five tools', async t => {
+test('MCP create labels the initial run for its configured desktop workspace and preserves the combined tool surface', async t => {
  const f = fixture(); const server = makeServer(f.runtime, f.config);
  const client = new Client({ name: 'desktop-test', version: '1' });
  const [a,b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
  t.after(async () => { await client.close(); await server.close(); f.runtime.close(); });
- assert.deepEqual((await client.listTools()).tools.map(x => x.name).sort(), ['create_session','list_hosts','list_sessions','read_output','send_prompt']);
+ assert.deepEqual((await client.listTools()).tools.map(x => x.name).sort(), ['create_session','list_hosts','list_sessions','press_escape','read_output','send_prompt']);
  const response = await client.callTool({ name: 'create_session', arguments: request });
  assert.notEqual(response.isError, true);
  const result = JSON.parse(response.content[0].text);
