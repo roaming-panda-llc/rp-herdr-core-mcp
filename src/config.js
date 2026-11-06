@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import path from 'node:path';
+import { escapePolicy } from './controls.js';
 export const idSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/);
 const absolutePath = z.string().min(1).max(1024).refine(s => s.startsWith('/') && !/[\x00-\x1f\x7f]/.test(s) && path.posix.normalize(s) === s, 'Use a normalized absolute Unix path');
 const terminalId = z.string().regex(/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/).max(32);
 const spaceId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/).max(128);
 const policy = {
+  escape: escapePolicy.optional(),
   coreId: z.string().min(1).max(256).optional(),
   accessMode: z.enum(['restricted', 'trusted-core']).default('restricted'),
   sendMode: z.enum(['idle-only', 'normal']).default('idle-only'),
@@ -52,9 +54,9 @@ export const configSchema = z.object({
   events: events.optional()
 }).strict().superRefine((v, c) => {
   if (!!v.hosts === !!v.socketPath) c.addIssue({ code: 'custom', message: 'Configure either legacy socketPath or named hosts, not both' });
-  if (v.hosts && (v.coreId || v.sendAllowlist.length || v.accessMode !== 'restricted' || v.sendMode !== 'idle-only')) c.addIssue({ code: 'custom', message: 'Set write policies inside each named host, not at top level' });
+  if (v.hosts && (v.escape || v.coreId || v.sendAllowlist.length || v.accessMode !== 'restricted' || v.sendMode !== 'idle-only')) c.addIssue({ code: 'custom', message: 'Set write policies inside each named host, not at top level' });
   if (v.hosts && (Object.keys(v.hosts).length < 1 || Object.keys(v.hosts).length > 16 || !v.defaultHost || !Object.hasOwn(v.hosts, v.defaultHost))) c.addIssue({ code: 'custom', message: 'Configure 1–16 hosts and an existing defaultHost' });
   if (!v.hosts && v.defaultHost && v.defaultHost !== 'local') c.addIssue({ code: 'custom', message: 'Legacy defaultHost must be local' });
-  if (!v.hosts && (v.sendAllowlist.length || v.accessMode === 'trusted-core') && !v.coreId) c.addIssue({ code: 'custom', message: 'Writes require coreId' });
+  if (!v.hosts && (v.escape?.enabled || v.sendAllowlist.length || v.accessMode === 'trusted-core') && !v.coreId) c.addIssue({ code: 'custom', message: 'Writes require coreId' });
   if (v.transport === 'http' && !v.publicOrigin) c.addIssue({ code: 'custom', message: 'HTTP requires publicOrigin' });
 });

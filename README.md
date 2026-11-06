@@ -3,8 +3,8 @@
 A small single-user MCP adapter for **herdr-core (tested: 0.1.15, 0.1.16, 0.1.17)**, using the official MCP
 SDK. Version **0.2.0**. MIT licensed. macOS/Linux; no Windows pipe support.
 
-Five tools expose configured cores: `list_hosts`, `list_sessions`, `read_output`,
-`send_prompt`, and opt-in `create_session`. No extra LLM or arbitrary-shell tool.
+Six tools expose configured cores: `list_hosts`, `list_sessions`, `read_output`,
+`send_prompt`, opt-in `create_session`, and opt-in `press_escape`. No extra LLM or arbitrary-shell tool.
 Legacy local configuration stays restricted. Named hosts and broad trusted-core
 creation require explicit operator configuration/approval; see [MULTIHOST.md](MULTIHOST.md).
 Unix connections never start core. An explicitly approved SSH `hc connect` bridge
@@ -57,7 +57,8 @@ exceed the byte limit before pagination; this fails explicitly. The adapter chec
 JSON-RPC IDs and reply shape, generation 1, plain framing, required methods, and
 configured core identity. Versions 0.1.15, 0.1.16 and 0.1.17 are reviewed. Other
 well-formed older/newer versions warn on stderr and proceed after those checks;
-version alone is not a rejection. Mutation errors on untested versions remain
+version alone is not a rejection for the original tools. Escape is stricter:
+`press_escape` retains its reviewed 0.1.15/0.1.16 gate and rejects all other versions. Mutation errors on untested versions remain
 unknown outcomes, including status_mismatch: inspect before retrying. Warnings
 are emitted once per untested version per CoreClient (bounded to 16 versions).
 Shutdown closes adapter connections only; existing terminals continue.
@@ -181,3 +182,9 @@ in the initial `terminal.run` request. Receipts expose `desktop_space` and
 a desktop window rendered the terminal. No desktop document or existing terminal
 is rewritten. Reconciliation retains an existing terminal's placement even if the
 operator later changes the mapping, and cached receipts remain explicitly stale.
+
+## Escape cancellation
+
+The opt-in `press_escape` tool supports one exactly approved Escape cancellation.
+It is disabled by default and requires a separate expiring terminal/screen approval.
+See [ESCAPE.md](ESCAPE.md) for the policy, state-race limits, and mandatory readback.

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { idSchema } from './config.js';
 import { HostRuntime, resolveHost } from './runtime.js';
 import { createSession } from './create.js';
+import { escapeInput, pressEscape } from './controls.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -183,6 +184,11 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
     inputSchema: { host: idSchema.optional(), profile: idSchema, project: idSchema, variant: idSchema.optional(), name: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,31}$/).refine(s => !/^t[1-9][0-9bcdfghjkmnpqrstvwxyz]*$/.test(s), 'Name must not look like a terminal ID').optional(), request_id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
   }, wrap(async (args, extra) => createSession(resolveHost(core, config, args.host), args, extra.signal, eventManager)));
+  server.registerTool('press_escape', {
+    description: 'Send exactly one Escape for an expiring operator-approved non-approval UI cancellation. Requires explicit host, exact approved terminal lifetime/PID and screen, relevant user authorization and prior screen inspection. Never dismiss or bypass permission/approval prompts. Only exact idle/done preflight is allowed; status, screen and lifetime checks are NOT atomic with delivery. No other keys or text. Never retry automatically after an error or unknown delivery: read_output is required before reconsidering a new operator approval. Core acknowledgement does not verify UI dismissal; read_output afterward.',
+    inputSchema: escapeInput,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
+  }, wrap((args, extra) => pressEscape(resolveHost(core, config, args.host), args, extra?.signal)));
   return server;
 }
 
