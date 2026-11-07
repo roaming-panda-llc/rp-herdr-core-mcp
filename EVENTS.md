@@ -131,3 +131,27 @@ capture or transport instrumentation is enabled.
 SDK error behavior is unchanged: the pinned SDK returns `-32603` for these schema
 parse errors; Herdr handler errors use `-32602`, while callback verification errors
 use `-32015`. Schema diagnostics do not change or suppress protocol responses.
+
+
+## Escape policy compatibility
+
+Events scope excludes only the top-level `escape` policy on each named host.
+All other previously hashed fields, including host IDs, pinned core IDs,
+connection details and profiles, retain their existing serialization and checks.
+Legacy single-socket scope is unchanged. Adding, editing, disabling or removing
+Escape approvals therefore does not require resetting Events or replacing keys.
+
+Stores from before Escape retain the exact same fingerprint; startup needs no
+scope rewrite. For stores written by the initial Escape release, startup accepts
+the old full-host hash only when it matches the **exact current configuration**,
+then persists the normalized fingerprint before polling/delivery. Subscriptions,
+queued events, cursors/history and observation checkpoints are preserved, subject
+to existing normal expiry cleanup. The encryption key is unchanged. A failed
+migration write aborts startup; identity mismatches still fail closed.
+
+If a legacy full-host store and its Escape policy were changed at the same time,
+restore the original configuration for one startup with the fixed adapter before
+editing the Escape policy. Do not edit/reset the protected state, replace the
+wrapping key, guess a prior hash, or disable the scope check. Rollback to an older
+adapter requires the pre-Escape host configuration (without `escape`) to match
+the normalized fingerprint; an old adapter hashing Escape will reject it.
