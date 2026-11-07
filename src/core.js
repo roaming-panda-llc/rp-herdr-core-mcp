@@ -2,6 +2,9 @@ import net from 'node:net';
 
 export const TESTED_CORE_VERSIONS = Object.freeze(['0.1.15', '0.1.16', '0.1.17']);
 
+// Escape validation is separate from the broader send/create compatibility list.
+export const ESCAPE_CORE_VERSIONS = Object.freeze(['0.1.15', '0.1.16', '0.1.18']);
+
 export class CoreError extends Error {}
 export class CoreClient {
   constructor({ socketPath, timeoutMs = 15000, maxBytes = 1048576, maxConnections = 8, connect = net.createConnection, warn = message => console.error(message) }) {
@@ -65,7 +68,7 @@ export class CoreClient {
             const hello = message.result;
             if (typeof hello?.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$/.test(hello.version) || hello.version.length > 128 || hello.generation !== 1 || hello.framed !== false || (!Array.isArray(hello.methods) || !hello.methods.every(m => typeof m === 'string') || !hello.methods.includes(method))) return finish('Core is not compatible: invalid version metadata, generation, framing or required method');
             if (expectedCoreId && hello.core?.id !== expectedCoreId) return finish('Core identity mismatch; request not sent');
-            if (method === 'terminal.keys' && !['0.1.15', '0.1.16'].includes(hello.version)) return finish('Escape requires reviewed hc 0.1.15/0.1.16; no request was sent');
+            if (method === 'terminal.keys' && !ESCAPE_CORE_VERSIONS.includes(hello.version)) return finish('Escape requires reviewed hc 0.1.15/0.1.16/0.1.18; no request was sent');
             testedVersion = TESTED_CORE_VERSIONS.includes(hello.version);
             if (!testedVersion && !this.warnedVersions.has(hello.version) && this.warnedVersions.size < 16) {
               this.warnedVersions.add(hello.version);

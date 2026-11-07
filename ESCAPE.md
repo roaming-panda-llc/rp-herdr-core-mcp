@@ -56,7 +56,7 @@ There is no retry on another host or version.
 
 ## Limits that affect authorization
 
-Preflight is **not atomic** with input. Supported core 0.1.15/0.1.16 keys has no
+Preflight is **not atomic** with input. Supported core 0.1.15/0.1.16/0.1.18 keys has no
 status, PID, lifetime, screen, or expiry predicate. State can change after checks,
 especially while core waits for human input to become quiet. Core resolves the
 terminal ID at dispatch, not an adapter-provided lifetime token. If authorization
@@ -104,7 +104,7 @@ runtime validation is recorded below and does not rely on those mocks.
 
 Reconciled onto main `190d723447e842d8fcf7174b3cb1d7262485ba98`, retaining
 Events discovery/delivery, desktop placement, and the original tools' forward
-version tolerance. Escape alone keeps its reviewed 0.1.15/0.1.16 gate; even
+version tolerance. Escape alone kept its reviewed 0.1.15/0.1.16 gate at that checkpoint; even
 0.1.17 is rejected for Escape until its key path is reviewed and validated.
 All cancellation and unknown-outcome guards remain unchanged.
 
@@ -173,3 +173,41 @@ They cover both versions allowed for Escape and do not justify widening that
 allowlist. They also do not remove core's non-atomic delivery race or make
 blocked/error/working recovery safe. The production control implementation and
 all its approval/replay/unknown-outcome guards were left unchanged.
+
+## Core 0.1.18 validation — November 7, 2026
+
+Escape additionally admits exact upstream v0.1.18 commit
+`3965a46caae095a3ead01de237fa13955e52b8c6`. Review against v0.1.16
+covered `api.rs::terminal_keys`, `api/types.rs::KeysParams/KeysResult`,
+`input.rs::keys/type_in/Gate`, and `keys.rs`. Key parameters/results and encoding
+are unchanged. The human quiet gate now distinguishes automatic viewer replies
+from human input; normal key delivery still uses `quiet()` and checks a live
+program. No atomic status/lifetime/screen/expiry predicate was added.
+`terminal_keys` now flushes registry state after delivery: a flush error may occur
+AFTER input. All post-dispatch errors remain unknown delivery, with no automatic
+retry; regression coverage includes this case.
+
+Built the pinned source with existing Rust/Cargo 1.95.0, Zig 0.16.0 and unchanged
+Ghostty `1e5cdb865807abc990181efb8ebfa9122955cce2`, using `cargo build --locked`.
+Linux binary SHA-256:
+`962cf3ce0202a438e0e81a74da70f85ae140cb5b0499edd81b4b861d0e1d83ab`.
+Both upstream targeted tests passed (one each): keyboard-mode encoding and
+`automatic_replies_preserve_the_human_quiet_gate`.
+The committed synthetic PTY harness passed all seven cases: legacy/Kitty Escape
+in idle/done, post-input screen readback and replay rejection, and zero input for
+blocked/error/working. Core and owned fixture PIDs exited and scratch paths were
+removed. These are real Linux PTYs, not a macOS deployment or a user UI test.
+
+Only the Escape compatibility list changes. The broader tested-version list and
+send/create behavior remain unchanged; a general untested-version warning for
+0.1.18 may therefore still appear. Exact 0.1.17, future 0.1.19, and prerelease
+0.1.18-dev remain rejected for Escape. All approval and unknown-delivery limits
+above still apply.
+
+Deploy using AGENT-HANDOFF.md and preserve the scope compatibility documented in
+EVENTS.md. Keep existing private configuration, Events store/key, core processes,
+and sessions. Remove consumed action approvals before adapter replacement;
+never replay an action across restart. Verify discovery and reads before any
+independently inspected, exact approved synthetic cancellation. Rollback to the
+PR #2 release retains normalized Events compatibility but rejects Escape on
+0.1.18; restore the prior adapter command/configuration without resetting state.

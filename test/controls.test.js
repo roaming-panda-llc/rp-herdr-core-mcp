@@ -109,6 +109,7 @@ async function wire(t, failure, override = {}) {
         }
         else if (failure === 'disconnect') s.destroy();
         else if (failure === 'shape') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: {} }) + '\n');
+        else if (failure === 'flush') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32000, data: { kind: 'unavailable' } } }) + '\n');
         else if (failure === 'rejected') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32000, data: { kind: 'status_mismatch' } } }) + '\n');
         else if (failure === 'malformed') s.write('broken\n');
         else if (failure === 'success') s.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { status: 'idle', turn: 1 } }) + '\n');
@@ -130,12 +131,12 @@ async function wire(t, failure, override = {}) {
   t.after(async () => { core.close(); for (const s of sockets) s.destroy(); if (server) await new Promise(r => server.close(r)); if (dir) await rm(dir, { recursive: true, force: true }); });
   return { core, calls };
 }
-for (const failure of ['timeout', 'disconnect', 'malformed', 'shape', 'rejected']) test(`keys ${failure} after dispatch is unknown and never retried`, async t => {
-  const f = await wire(t, failure);
+for (const version of ['0.1.15', '0.1.18']) for (const failure of ['timeout', 'disconnect', 'malformed', 'shape', 'rejected', 'flush']) test(`keys ${version} ${failure} after dispatch is unknown and never retried`, async t => {
+  const f = await wire(t, failure, { version });
   await assert.rejects(f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'), e => e.delivery === 'unknown' && /no automatic retry/.test(e.message));
   assert.equal(f.calls.filter(c => c.method === 'terminal.keys').length, 1);
 });
-for (const override of [{ version: '0.2.0' }, { version: '0.1.17' }, { methods: [] }, { core: { id: 'wrong' } }]) test(`keys capability/version/identity fails closed: ${JSON.stringify(override)}`, async t => {
+for (const override of [{ version: '0.2.0' }, { version: '0.1.17' }, { version: '0.1.19' }, { version: '0.1.18-dev' }, { methods: [] }, { core: { id: 'wrong' } }]) test(`keys capability/version/identity fails closed: ${JSON.stringify(override)}`, async t => {
   const f = await wire(t, 'success', override);
   await assert.rejects(f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'));
   assert.ok(!f.calls.some(c => c.method === 'terminal.keys'));
@@ -187,8 +188,8 @@ test('Escape passes the exact approval expiry to the core dispatch gate', async 
   await pressEscape(f.ctx, args);
 });
 
-test('reviewed Escape version 0.1.16 remains supported on the combined branch', async t => {
-  const f = await wire(t, 'success', { version: '0.1.16' });
+for (const version of ['0.1.16', '0.1.18']) test(`reviewed Escape version ${version} remains supported`, async t => {
+  const f = await wire(t, 'success', { version });
   assert.deepEqual(await f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'), { status: 'idle', turn: 1 });
   assert.equal(f.calls.filter(c => c.method === 'terminal.keys').length, 1);
 });

@@ -71,7 +71,7 @@ replay uncertain creation with a new ID. Retain the session for investigation.
 ## Escape activation
 
 Read ESCAPE.md before activation. `press_escape` is separate from send/create
-permissions and only accepts core 0.1.15/0.1.16. Do not downgrade a newer core or
+permissions and only accepts core 0.1.15/0.1.16/0.1.18. Do not downgrade a newer core or
 broaden the version/state gates to make activation pass. Preserve all existing
 host identities, session lifetimes and private configuration. Enable Escape only
 on an approved compatible host; use exact expiring non-approval UI cancellation

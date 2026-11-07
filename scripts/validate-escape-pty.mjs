@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, access } from 'node:fs/promise
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { CoreClient } from '../src/core.js';
+import { CoreClient, ESCAPE_CORE_VERSIONS } from '../src/core.js';
 import { pressEscape } from '../src/controls.js';
 const execFile = promisify(execFileCallback);
 if (process.platform !== 'linux' || !process.argv[2]) throw new Error('Usage on Linux: node scripts/validate-escape-pty.mjs /absolute/path/to/reviewed/herdr-core');
@@ -46,7 +46,7 @@ try {
   await waitFor(async () => { if (childError) throw childError; try { await access(env.HC_SOCKET); return true; } catch { return false; } }, 'disposable core socket');
   const hello = await core.call('hello', { generation: 1, framed: false });
   version = hello.version;
-  assert.ok(['0.1.15', '0.1.16'].includes(version));
+  assert.ok(ESCAPE_CORE_VERSIONS.includes(version));
   coreId = hello.core.id;
   const call = (method, params) => core.call(method, params, coreId);
   for (const [mode, status] of [['legacy','idle'], ['kitty','idle'], ['legacy','done'], ['kitty','done'], ['legacy','blocked'], ['legacy','error'], ['legacy','working']]) {
