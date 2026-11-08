@@ -113,7 +113,7 @@ test('config rejects accidental write enablement and unknown options', () => {
 test('tools list, bounded read/list and disabled send', async t => {
   const f = await fixture(t, (m, reply) => reply(m.method === 'terminal.list' ? { terminals: [{ address: 't1', created_ms: 1, title: 'a'.repeat(5000), status: { state: 'idle' } }, { address: 'remote/t2' }] } : { text: 'abcxyz', complete: true, how: 'screen' }));
   const client = await clientFor(t, f.core);
-  assert.deepEqual((await client.listTools()).tools.map(t => t.name), ['list_sessions', 'read_output', 'send_prompt', 'list_hosts', 'create_session', 'press_escape']);
+  assert.deepEqual((await client.listTools()).tools.map(t => t.name), ['list_sessions', 'read_output', 'send_prompt', 'list_hosts', 'create_session', 'press_escape', 'press_menu_key', 'control_terminal_lifecycle']);
   const list = unpack(await client.callTool({ name: 'list_sessions', arguments: {} }));
   assert.equal(list.total, 1); assert.equal(list.sessions[0].title.length, 512);
   const output = unpack(await client.callTool({ name: 'read_output', arguments: { terminal: 't1', max_chars: 3 } }));
@@ -140,7 +140,7 @@ test('MCP stdio child discovers and reads through mock core and closes cleanly',
   const transport = new StdioClientTransport({ command: process.execPath, args: [resolve('src/index.js'), config], stderr: 'pipe' });
   const client = new Client({ name: 'test', version: '1' });
   t.after(() => client.close()); await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length, 6);
+  assert.equal((await client.listTools()).tools.length, 8);
   assert.equal(unpack(await client.callTool({ name: 'read_output', arguments: { terminal: 't1' } })).text, 'mock screen');
   await client.close();
 });
@@ -184,7 +184,7 @@ test('HTTP fails closed, rejects origin/host/body and serves authenticated offic
   const client = new Client({ name: 'test', version: '1' });
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
-  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['list_sessions', 'read_output', 'send_prompt', 'list_hosts', 'create_session', 'press_escape']);
+  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['list_sessions', 'read_output', 'send_prompt', 'list_hosts', 'create_session', 'press_escape', 'press_menu_key', 'control_terminal_lifecycle']);
   assert.equal(unpack(await client.callTool({ name: 'list_sessions', arguments: {} })).total, 0);
 });
 
@@ -200,7 +200,7 @@ test('stdio process starts, discovers tools, and exits on client close without h
   const client = new Client({ name: 'test', version: '1' });
   t.after(async () => { await client.close(); await rm(dir, { recursive: true, force: true }); });
   await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length, 6);
+  assert.equal((await client.listTools()).tools.length, 8);
   await client.close();
 });
 

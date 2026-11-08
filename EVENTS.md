@@ -135,7 +135,7 @@ use `-32015`. Schema diagnostics do not change or suppress protocol responses.
 
 ## Escape policy compatibility
 
-Events scope excludes only the top-level `escape` policy on each named host.
+Events scope excludes only the top-level `escape`, `menu`, and `lifecycle` control policies on each named host.
 All other previously hashed fields, including host IDs, pinned core IDs,
 connection details and profiles, retain their existing serialization and checks.
 Legacy single-socket scope is unchanged. Adding, editing, disabling or removing

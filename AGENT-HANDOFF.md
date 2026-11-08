@@ -19,7 +19,7 @@ lifetimes. This package does not authorize deployment or security-setting change
    script paths, keeping its private config path and credential references. Stop
    the old adapter/client before starting a replacement. When a tunnel is involved,
    preserve its identity and access controls; one active client per tunnel.
-6. Discover exactly six tools and verify list/screen reads. Do not use send to
+6. Discover exactly eight tools and verify list/screen reads. Do not use send to
    test authentication. For approved follow-up support, set `sendMode: "normal"`
    explicitly in the private config, retain the same core/terminal lifetime pins,
    and accept the documented done-to-working race. Without this setting old
@@ -81,3 +81,6 @@ synthetic disposable test session is preferred for deployment verification;
 preserve unrelated sessions and drafts. If no compatible host or supported
 operator access is available, report activation blocked rather than weakening
 guards or claiming an enabled but unusable control is verified.
+
+Read CONTROLS.md for menu and lifecycle controls. Keep both policies disabled
+until exact operator approval; never derive cleanup permission from idleness.

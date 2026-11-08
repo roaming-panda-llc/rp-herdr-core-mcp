@@ -1,9 +1,10 @@
+import { lifecycleInput, controlLifecycle } from './lifecycle.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { idSchema } from './config.js';
 import { HostRuntime, resolveHost } from './runtime.js';
 import { createSession } from './create.js';
-import { escapeInput, pressEscape } from './controls.js';
+import { escapeInput, pressEscape, menuInput, pressMenuKey } from './controls.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -189,6 +190,16 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
     inputSchema: escapeInput,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
   }, wrap((args, extra) => pressEscape(resolveHost(core, config, args.host), args, extra?.signal)));
+  server.registerTool('press_menu_key', {
+    description: 'Send one exact operator-approved key to a previously inspected non-approval menu. Requires relevant user authorization, explicit host, pinned core and exact terminal lifetime/PID, screen, idle/done status and expiry. Never use for permission/security prompts, shell commands, destructive actions, credential changes or spending without their required authorization. Enter/Space require a unique approved textual selection marker; style/color/cursor-only selections are unsupported. Navigation and Enter/Space may take consequential actions: approval must cover the exact key and its expected effect. No sequences, raw bytes, modifiers or status bypass. Checks are NOT atomic with delivery. Read output after every attempt; unknown delivery forbids automatic retry. Acknowledgement is not verified selection or completion.',
+    inputSchema: menuInput,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
+  }, wrap((args, extra) => pressMenuKey(resolveHost(core, config, args.host), args, extra?.signal)));
+  server.registerTool('control_terminal_lifecycle', {
+    description: 'Explicitly approved termination of a core-managed program (HUP then TERM/KILL escalation), or removal of an already-finished terminal record. Termination covers the program process tree AND local/remote linked child terminals, including queued effects on offline peers. Single-process/single-host-only authorization is insufficient. Known live child terminals cause rejection; new descendants can race. Requires explicit whole local/remote descendant termination consent and work preservation for that entire scope, exact host/core/terminal lifetime/PID/status/screen/expiry and operator acknowledgement of NON-ATOMIC targeting. Idleness alone never authorizes cleanup. Never infer closure permission from done/idle. Does not kill arbitrary PIDs or close desktop windows. Keeps termination separate from record removal; removal also deletes stored screen and terminal upload files and requires explicit preservation/deletion consent. Only core 0.1.18. Reports observed core postcondition; OS process exit and GUI window closure require separate verification. Unknown outcomes forbid automatic retry.',
+    inputSchema: lifecycleInput,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
+  }, wrap((args, extra) => controlLifecycle(resolveHost(core, config, args.host), args, extra?.signal)));
   return server;
 }
 

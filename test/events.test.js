@@ -169,7 +169,7 @@ test('original tools and Escape listed with events enabled or disabled', async t
   for (const eventsEnabled of [false, true]) {
     const { client } = await setup(t, eventsEnabled);
     const tools = (await client.listTools()).tools.map(t => t.name).sort();
-    assert.deepEqual(tools, ['create_session', 'list_hosts', 'list_sessions', 'press_escape', 'read_output', 'send_prompt']);
+    assert.deepEqual(tools, ['control_terminal_lifecycle', 'create_session', 'list_hosts', 'list_sessions', 'press_escape', 'press_menu_key', 'read_output', 'send_prompt']);
   }
 });
 

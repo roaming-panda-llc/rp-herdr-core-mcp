@@ -193,3 +193,21 @@ for (const version of ['0.1.16', '0.1.18']) test(`reviewed Escape version ${vers
   assert.deepEqual(await f.core.call('terminal.keys', { terminal: 't1', keys: ['esc'] }, 'test-core'), { status: 'idle', turn: 1 });
   assert.equal(f.calls.filter(c => c.method === 'terminal.keys').length, 1);
 });
+
+test('menu version pin rejects older core before any key dispatch', async t => {
+  const f = await wire(t, 'success', { version:'0.1.16' });
+  await assert.rejects(f.core.call('terminal.keys',{terminal:'t1',keys:['enter']},'test-core',{requiredVersion:'0.1.18'}),/version does not match/);
+  assert.equal(f.calls.some(c=>c.method==='terminal.keys'),false);
+});
+for(const method of ['terminal.kill','terminal.rm']) {
+  for(const failure of ['disconnect','timeout','flush','malformed'])test(`${method} post-dispatch ${failure} is unknown`,async t=>{
+    const f=await wire(t,failure,{version:'0.1.18',methods:[method]});
+    await assert.rejects(f.core.call(method,{terminal:'t1'},'test-core',{requiredVersion:'0.1.18'}),e=>e.delivery==='unknown'&&/no automatic retry/.test(e.message));
+    assert.equal(f.calls.filter(c=>c.method===method).length,1);
+  });
+  test(`${method} wrong version sends nothing`,async t=>{
+    const f=await wire(t,'success',{version:'0.1.16',methods:[method]});
+    await assert.rejects(f.core.call(method,{terminal:'t1'},'test-core',{requiredVersion:'0.1.18'}),/version does not match/);
+    assert.ok(!f.calls.some(c=>c.method===method));
+  });
+}

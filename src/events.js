@@ -146,12 +146,12 @@ export class EventManager {
     this.autoDispatch = autoDispatch;
     this.state = this.store?.load() ?? { version: 1, subscriptions: [], outbox: [], history: [], sequence: 0, terminals: [], initializedHosts: [], created: [] };
     if (this.state.version !== 1 || !Array.isArray(this.state.subscriptions) || !Array.isArray(this.state.outbox) || !Array.isArray(this.state.history) || !Array.isArray(this.state.terminals) || !Array.isArray(this.state.created) || !Array.isArray(this.state.initializedHosts) || !Number.isSafeInteger(this.state.sequence) || this.state.subscriptions.length > MAX_SUBSCRIPTIONS || this.state.outbox.length > MAX_OUTBOX || this.state.history.length > MAX_HISTORY || this.state.terminals.length > MAX_TERMINALS) throw new Error('Invalid event state');
-    // Escape approvals authorize input, not event observation. Preserve the exact
+    // Escape/menu approvals authorize input, not event observation. Preserve the exact
     // pre-Escape serialization (including order and every other host field), so
     // adding/changing/removing that policy does not strand existing event state.
     const scopeFor = hosts => createHash('sha256').update(JSON.stringify({ hosts, coreId: config.coreId, socketPath: config.socketPath })).digest('hex');
     const eventHosts = config.hosts && Object.fromEntries(Object.entries(config.hosts).map(([id, host]) => {
-      const { escape, ...eventHost } = host;
+      const { escape, menu, lifecycle, ...eventHost } = host;
       return [id, eventHost];
     }));
     const scope = scopeFor(eventHosts);
