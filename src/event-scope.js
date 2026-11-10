@@ -33,3 +33,56 @@ export function rebindSendTargetExtension(state, beforeInput, afterInput, target
   if (state?.version !== 1 || state.scope !== eventScope(before) || !['subscriptions', 'outbox', 'history', 'terminals', 'initializedHosts', 'created'].every(k => Array.isArray(state[k])) || !Number.isSafeInteger(state.sequence)) throw new Error('Existing event state does not match the exact prior configuration');
   return { ...structuredClone(state), scope: eventScope(after) };
 }
+
+const hostAdditionApproval = z.object({
+  host: idSchema,
+  coreId: z.string().min(1).max(256),
+  connection: z.unknown(),
+  includeUnfilteredEvents: z.literal(true),
+  grants: z.array(targetSchema.omit({ host: true })).length(2)
+}).strict();
+
+// Separate, explicitly approved four-to-five-host migration. The approval is
+// an operator-supplied exact snapshot, never inferred from afterInput. Existing
+// unfiltered subscriptions will observe the added host; operator approval must
+// expressly include that event access. No automatic startup/API path calls this.
+export function rebindApprovedHostAddition(state, beforeInput, afterInput, approvalInput) {
+  const before = configSchema.parse(beforeInput);
+  const after = configSchema.parse(afterInput);
+  const approval = hostAdditionApproval.parse(approvalInput);
+  if (!before.hosts || Object.keys(before.hosts).length !== 4 ||
+      Object.hasOwn(before.hosts, approval.host) ||
+      !before.events?.enabled || !before.events.stateDirectory) {
+    throw new Error('Requires an existing durable four-host scope and a new host');
+  }
+  if (new Set(approval.grants.map(g => g.address)).size !== 2) {
+    throw new Error('Requires two distinct exact lifetime grants');
+  }
+  // Construct the only permissible new host. Creation profiles, Escape policy,
+  // trusted-core, normal/forced sends and extra grants cannot be smuggled in.
+  const expected = configSchema.parse({
+    ...before,
+    hosts: {
+      ...before.hosts,
+      [approval.host]: {
+        coreId: approval.coreId,
+        connection: approval.connection,
+        accessMode: 'restricted',
+        sendMode: 'idle-only',
+        sendAllowlist: approval.grants,
+        profiles: {}
+      }
+    }
+  });
+  if (JSON.stringify(expected) !== JSON.stringify(after)) {
+    throw new Error('Only the exact approved host and two lifetime grants may change');
+  }
+  if (state?.version !== 1 || state.scope !== eventScope(before) ||
+      !['subscriptions', 'outbox', 'history', 'terminals', 'initializedHosts', 'created'].every(k => Array.isArray(state[k])) ||
+      !Number.isSafeInteger(state.sequence)) {
+    throw new Error('Existing event state does not match the exact prior configuration');
+  }
+  // Preserve all subscription owners, filters, IDs, secrets and pending bytes.
+  // Only the approved scope binding changes; encryption/save is caller-owned.
+  return { ...structuredClone(state), scope: eventScope(after) };
+}
