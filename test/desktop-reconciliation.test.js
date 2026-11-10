@@ -58,7 +58,7 @@ test('MCP create labels the initial run for its configured desktop workspace and
  const client = new Client({ name: 'desktop-test', version: '1' });
  const [a,b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
  t.after(async () => { await client.close(); await server.close(); f.runtime.close(); });
- assert.deepEqual((await client.listTools()).tools.map(x => x.name).sort(), ['create_session','list_hosts','list_sessions','press_escape','read_output','send_prompt']);
+ assert.deepEqual((await client.listTools()).tools.map(x => x.name).sort(), ['create_session','events_diagnostics','list_hosts','list_sessions','press_escape','read_output','send_prompt']);
  const response = await client.callTool({ name: 'create_session', arguments: request });
  assert.notEqual(response.isError, true);
  const result = JSON.parse(response.content[0].text);

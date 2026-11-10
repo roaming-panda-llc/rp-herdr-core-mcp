@@ -3,6 +3,7 @@ import { Webhook } from 'standardwebhooks';
 import { z } from 'zod';
 import { validateCallbackUrl, webhookFetch } from './webhook.js';
 import { EventStore } from './event-store.js';
+import { eventScope } from './event-scope.js';
 
 const eventsCatalog = [
   {
@@ -150,11 +151,7 @@ export class EventManager {
     // pre-Escape serialization (including order and every other host field), so
     // adding/changing/removing that policy does not strand existing event state.
     const scopeFor = hosts => createHash('sha256').update(JSON.stringify({ hosts, coreId: config.coreId, socketPath: config.socketPath })).digest('hex');
-    const eventHosts = config.hosts && Object.fromEntries(Object.entries(config.hosts).map(([id, host]) => {
-      const { escape, ...eventHost } = host;
-      return [id, eventHost];
-    }));
-    const scope = scopeFor(eventHosts);
+    const scope = eventScope(config);
     const migrateScope = !!this.state.scope && this.state.scope !== scope;
     // A store written by the initial Escape release can be migrated only when
     // its full legacy hash matches this exact current configuration. Never
@@ -185,6 +182,22 @@ export class EventManager {
   getEventDefinition(name) { return eventsCatalog.find(e => e.name === name); }
   async handleList() { return { events: eventsCatalog, nextCursor: null }; }
   getSubscriptions() { return structuredClone(this.state.subscriptions); }
+  getDiagnostics(owner) {
+    // Inspect only this already-loaded manager. Do not clean up, persist, open
+    // another store, or expose callback destinations, secrets or identifiers.
+    const now = this.now();
+    const owned = this.state.subscriptions.filter(s => s.owner === owner);
+    const active = new Set(owned.filter(s => s.expiresAt > now).map(s => s.id));
+    return {
+      enabled: true,
+      active_subscriptions: active.size,
+      expired_subscriptions: owned.length - active.size,
+      queued_deliveries: this.state.outbox.filter(item => active.has(item.subscriptionId)).length,
+      polling_started: this.started === true,
+      delivery_stopped: this.shuttingDown,
+      live_receipt_verified: null
+    };
+  }
   async startPolling() {
     if (this.started || this.shuttingDown || !this.store) return;
     this.started = true;
