@@ -92,6 +92,40 @@ test('create launches exact configured argv/cwd without a shell or task, verifie
   assert.equal((await client.callTool({ name: 'send_prompt', arguments: { terminal: result.terminal, prompt: 'approved task' } })).isError, undefined);
   assert.equal(cores[1].calls.length, 0);
 });
+test('Antigravity is opt-in, scoped and not ready without a status report', async t => {
+  const input = configuration();
+  input.hosts.local.profiles.antigravity = {
+    agent: 'antigravity', executable: '/opt/bin/agy',
+    args: ['--sandbox', '--mode', 'plan'], projects: { canary: '/srv/agy-canary' }
+  };
+  const cfg = configSchema.parse(input);
+  const core = mockCore('core-a');
+  const call = core.call.bind(core);
+  core.call = async (method, params, expected) => {
+    const result = await call(method, params, expected);
+    if (method === 'terminal.run') delete result.status;
+    return result;
+  };
+  const { client } = await setup(t, cfg, [core]);
+  const request = { profile: 'antigravity', project: 'canary', request_id: 'agy-canary-001' };
+  const result = data(await client.callTool({ name: 'create_session', arguments: request }));
+  assert.equal(result.verified, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.adapter_prompt_sent, false);
+  const run = core.calls.find(c => c.method === 'terminal.run').params;
+  assert.deepEqual(run.argv, ['/opt/bin/agy', '--sandbox', '--mode', 'plan']);
+  assert.equal(run.cwd, '/srv/agy-canary');
+  const replay = data(await client.callTool({ name: 'create_session', arguments: request }));
+  assert.equal(replay.cached_receipt, true);
+  assert.equal((await client.callTool({ name: 'create_session', arguments: {
+    ...request, project: 'demo', request_id: 'agy-canary-002'
+  } })).isError, true);
+  assert.equal((await client.callTool({ name: 'send_prompt', arguments: {
+    terminal: result.terminal, prompt: 'synthetic canary, do not send before ready'
+  } })).isError, true);
+  assert.equal(core.calls.filter(c => c.method === 'terminal.run').length, 1);
+  assert.equal(core.calls.some(c => c.method === 'terminal.send'), false);
+});
 test('restricted host cannot create or implicitly gain write access', async t => {
   const { client, cores } = await setup(t);
   assert.equal((await client.callTool({ name: 'create_session', arguments: { ...createArgs, host: 'remote' } })).isError, true);
