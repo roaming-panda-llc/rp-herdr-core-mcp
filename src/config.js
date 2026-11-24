@@ -15,7 +15,7 @@ const policy = {
 };
 const argument = z.string().max(1024).refine(s => !/[\x00-\x1f\x7f]/.test(s), 'No control characters');
 const profile = z.object({
-  agent: z.enum(['pi', 'claude']),
+  agent: z.enum(['pi', 'claude', 'antigravity']),
   executable: absolutePath,
   args: z.array(argument).max(40).default([]),
   variants: z.record(idSchema, z.array(argument).max(20)).default({}).refine(v => Object.keys(v).length <= 16, 'At most 16 variants'),
