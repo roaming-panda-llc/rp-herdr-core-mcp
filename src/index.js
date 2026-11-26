@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { HostRuntime } from './runtime.js';
 import { makeServer, makeHttpApp } from './server.js';
 import { configSchema } from './config.js';
+import { makeNativeOwnerApp } from './native-owner.js';
 let core, listener, server, closeEvents;
 let stopping = false;
 async function stop() {
@@ -26,7 +27,7 @@ try {
     process.stdin.once('end', () => { void stop(); });
     await server.connect(transport);
   } else {
-    const app = makeHttpApp(core, config, process.env.HERDR_MCP_TOKEN);
+    const app = config.nativeOwner ? await makeNativeOwnerApp(core, config) : makeHttpApp(core, config, process.env.HERDR_MCP_TOKEN);
     closeEvents = app.locals.closeEvents;
     await app.locals.startEvents();
     listener = app.listen(config.port, '127.0.0.1', () => console.error(`herdr-core MCP on loopback port ${config.port}; HTTPS proxy required`));
