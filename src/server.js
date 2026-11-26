@@ -163,8 +163,13 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
     const current = snapshot?.terminals?.find(t => t.address === terminal);
     if (!current || (!trusted && current.created_ms !== approved.created_ms) || current.state !== 'live') throw new Error('Approved terminal identity is no longer live');
     if (trusted && (!Number.isSafeInteger(current.pid) || current.pid <= 0 || current.reason)) throw new Error('Trusted-core terminal program is not verified live');
-    const mode = policy.sendMode ?? 'idle-only';
     const observedStatus = current.status?.state ?? null;
+    if (config.nativeOwner) {
+      const dispatch = config.nativeSteer;
+      if (trusted || observedStatus !== 'working' || extra?.signal.aborted || typeof dispatch !== 'function') throw new Error('Native steering is not admissible');
+      return dispatch({ host: ctx.id, terminal, created_ms: current.created_ms, pid: current.pid, prompt });
+    }
+    const mode = policy.sendMode ?? 'idle-only';
     if (mode === 'normal' && !['idle', 'done'].includes(observedStatus)) throw new Error('Normal send requires an idle or done preflight; no prompt was sent');
     // Retain atomic idle check whenever available. hc 0.1.15 cannot express
     // if:done: normal-mode done dispatch uses standard send, NOT a force send.
@@ -201,13 +206,20 @@ export function makeServer(core, config, sharedEventManager, principal = 'stdio'
 
 export function makeHttpApp(core, config, token) {
   if (typeof token !== 'string' || Buffer.byteLength(token) < 32 || /replace|example|changeme/i.test(token)) throw new Error('HTTP requires a real HERDR_MCP_TOKEN of at least 32 bytes');
-  const origin = new URL(config.publicOrigin);
-  if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.username || origin.password || origin.search || origin.hash) throw new Error('publicOrigin must be a bare HTTPS origin');
   const digest = s => createHash('sha256').update(s).digest();
   const expected = digest(`Bearer ${token}`);
+  const principal = `bearer:${createHash('sha256').update(`Bearer ${token}`).digest('hex')}`;
+  return makeAuthenticatedHttpApp(core, config, (req, res, next) => {
+    if (!timingSafeEqual(digest(req.headers.authorization ?? ''), expected)) return res.status(401).set('WWW-Authenticate', 'Bearer').end();
+    next();
+  }, principal);
+}
+
+export function makeAuthenticatedHttpApp(core, config, authenticate, principal, resourceMetadata) {
+  const origin = new URL(config.publicOrigin);
+  if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.username || origin.password || origin.search || origin.hash) throw new Error('publicOrigin must be a bare HTTPS origin');
   const app = express();
   const events = config.events?.enabled ? createEventManager(core, config) : undefined;
-  const principal = `bearer:${createHash('sha256').update(`Bearer ${token}`).digest('hex')}`;
   if (events) events.restrictOwner(principal);
   app.locals.startEvents = async () => events?.startPolling();
   app.locals.closeEvents = async () => events?.stopPolling();
@@ -216,13 +228,13 @@ export function makeHttpApp(core, config, token) {
     res.set('Cache-Control', 'no-store');
     if (![origin.host, '127.0.0.1', `127.0.0.1:${config.port}`].includes(req.headers.host)) return res.status(403).end();
     if (req.headers.origin && req.headers.origin !== origin.origin) return res.status(403).end();
-    // This bearer-only adapter does not publish OAuth protected-resource metadata.
-    // A discovery probe must see absence, not an empty authentication challenge.
-    // Keep this exception exact and read-only; it never reaches MCP or core.
-    if (['GET', 'HEAD'].includes(req.method) &&
-        ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource'].includes(req.path)) return res.status(404).end();
-    if (!timingSafeEqual(digest(req.headers.authorization ?? ''), expected)) return res.status(401).set('WWW-Authenticate', 'Bearer').end();
-    next();
+    // Only the OAuth opt-in advertises its exact /mcp resource. No authenticated
+    // dispatch occurs on either discovery path, and the root resource is absent.
+    if (['GET', 'HEAD'].includes(req.method)) {
+      if (req.path === '/.well-known/oauth-protected-resource/mcp' && resourceMetadata) return res.json(resourceMetadata);
+      if (['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource'].includes(req.path)) return res.status(404).end();
+    }
+    return authenticate(req, res, next);
   });
   app.use(express.json({ limit: '64kb', strict: true }));
   app.post('/mcp', async (req, res) => {

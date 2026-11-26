@@ -51,12 +51,29 @@ export const configSchema = z.object({
   transport: z.enum(['stdio', 'http']).default('stdio'),
   port: z.number().int().min(1024).max(65535).default(8787),
   publicOrigin: z.string().url().optional(),
-  events: events.optional()
+  events: events.optional(),
+  nativeOwner: z.object({
+    issuer: z.string().url(), audience: z.string().url(), subject: z.string().min(1).max(256),
+    publicKeyPath: absolutePath, grantPath: absolutePath, bindingPath: absolutePath,
+    socketPath: absolutePath.refine(s => s.length <= 103),
+    host: idSchema, terminal: terminalId, created_ms: z.number().int().nonnegative().safe()
+  }).strict().optional()
 }).strict().superRefine((v, c) => {
   if (!!v.hosts === !!v.socketPath) c.addIssue({ code: 'custom', message: 'Configure either legacy socketPath or named hosts, not both' });
   if (v.hosts && (v.escape || v.coreId || v.sendAllowlist.length || v.accessMode !== 'restricted' || v.sendMode !== 'idle-only')) c.addIssue({ code: 'custom', message: 'Set write policies inside each named host, not at top level' });
   if (v.hosts && (Object.keys(v.hosts).length < 1 || Object.keys(v.hosts).length > 16 || !v.defaultHost || !Object.hasOwn(v.hosts, v.defaultHost))) c.addIssue({ code: 'custom', message: 'Configure 1–16 hosts and an existing defaultHost' });
   if (!v.hosts && v.defaultHost && v.defaultHost !== 'local') c.addIssue({ code: 'custom', message: 'Legacy defaultHost must be local' });
   if (!v.hosts && (v.escape?.enabled || v.sendAllowlist.length || v.accessMode === 'trusted-core') && !v.coreId) c.addIssue({ code: 'custom', message: 'Writes require coreId' });
+  if (v.nativeOwner) {
+    const n = v.nativeOwner;
+    const target = v.hosts ? v.hosts[n.host] : n.host === 'local' ? v : undefined;
+    if (v.transport !== 'http' || v.events?.enabled || !target?.coreId ||
+        target.accessMode !== 'restricted' || (target.connection && target.connection.type !== 'unix') ||
+        !target.sendAllowlist.some(a => a.address === n.terminal && a.created_ms === n.created_ms) ||
+        !URL.canParse(n.issuer) || new URL(n.issuer).protocol !== 'https:' || !URL.canParse(v.publicOrigin ?? '') ||
+        n.audience !== new URL('/mcp', v.publicOrigin).href) {
+      c.addIssue({ code: 'custom', message: 'Native owner mode requires private HTTP, exact HTTPS audience, restricted local Core and an exact allowlisted lifetime; events must be off' });
+    }
+  }
   if (v.transport === 'http' && !v.publicOrigin) c.addIssue({ code: 'custom', message: 'HTTP requires publicOrigin' });
 });
